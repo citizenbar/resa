@@ -1,0 +1,6 @@
+# Only public/ is served. Keep reference + backend SQL out of the deployment.
+_ref/
+supabase/
+.omc/
+*.md
+!public/**

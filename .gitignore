@@ -1,0 +1,22 @@
+# Secrets / env (config.js holds only the public anon key + placeholders, but never commit a real service_role key)
+.env
+.env.*
+!.env.example
+
+# Supabase CLI local state
+supabase/.branches
+supabase/.temp
+supabase/.env
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Dependencies (none required at runtime — Supabase SDK loaded via CDN)
+node_modules/
+
+# Vercel
+.vercel
