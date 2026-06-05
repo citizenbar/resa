@@ -384,3 +384,18 @@ footer { margin-top: 56px; text-align: center; font-family: 'JetBrains Mono', mo
   .portal-time { grid-column: 1 / -1; }
   .admin-stats { grid-template-columns: 1fr; }
 }
+
+/* Cache visuellement un element tout en le gardant dans le DOM et le source
+   (lisible par un lecteur d'ecran ou un agent IA). Pattern accessibilite
+   standard : on ne met PAS display:none (qui retirerait du flux semantique). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

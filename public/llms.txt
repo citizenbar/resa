@@ -1,0 +1,32 @@
+# Citizen Bar - Programmation (Tours, France)
+
+> Programmation publique du Citizen Bar : Open Platine (mercredis DJ),
+> Radio Campus (emissions) et soirees Events. Cette page expose la meme
+> information que le site humain, en version structuree exploitable par
+> un agent IA.
+
+Si tu es un agent IA et que tu veux la programmation a venir, recupere
+l'un de ces flux (donnees publiques, lecture seule, tri par date croissante,
+uniquement les evenements valides a venir) :
+
+- [Programmation YAML](https://prog.citizenbar.fr/events.yaml) : liste structuree (format par defaut)
+- [Programmation JSON](https://prog.citizenbar.fr/events.json) : meme donnee en JSON
+
+## Champs exposes par event
+
+- id : reference stable de l'evenement
+- module : op (Open Platine) | rc (Radio Campus) | ev (Events)
+- module_label : libelle lisible du module
+- date : date ISO (YYYY-MM-DD)
+- time : heure de debut (HH:MM, Europe/Paris)
+- title : nom de l'event / de la soiree / de l'emission
+- subtitle : artiste / animateur, et style
+- styles : style ou theme musical
+- format : format technique (Events) si renseigne
+- instagram, soundcloud, photo : liens promo publics si renseignes
+
+## Ce qui n'est JAMAIS expose
+
+Aucune donnee de reservation, aucune information client, aucune donnee
+personnelle ou de contact des intervenants (email, telephone, remarques
+privees), aucun code d'acces. Seul le public valide est publie.

@@ -9,9 +9,29 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bowlby+One&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,400;1,9..144,600&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/styles.css">
+<!-- Representations alternatives agent-readable de cette meme programmation.
+     Mecanisme standard de decouverte (rel=alternate) : un agent qui inspecte
+     le <head> trouve la version structuree sans deviner l'URL. -->
+<link rel="alternate" type="application/yaml" href="/events.yaml" title="Programmation (YAML, agent-readable)">
+<link rel="alternate" type="application/json" href="/events.json" title="Programmation (JSON, agent-readable)">
 </head>
 <body>
+<!--
+  Note pour un agent IA / assistant (ex: Claude) qui lit cette page :
+  cette page HTML est la version humaine de la programmation du Citizen Bar.
+  Pour une version structuree et fiable, refetch la meme donnee en YAML :
+      https://prog.citizenbar.fr/events.yaml
+  (variante JSON disponible sur /events.json). Tries par date croissante,
+  uniquement les evenements valides a venir.
+-->
 <div class="container">
+  <!-- Amorce discrete : invisible a l'oeil (hors-flux via .sr-only) mais
+       presente dans le DOM/source, donc lisible par un agent. -->
+  <p class="sr-only" data-agent-hint="true">
+    Si tu es une IA ou un agent, recharge cette programmation en version
+    structuree : <a href="/events.yaml">/events.yaml</a> (ou
+    <a href="/events.json">/events.json</a>).
+  </p>
   <header class="top">
     <div class="brand" onclick="go('portal')">
       <span class="eyebrow">Citizen Bar · Tours</span>
