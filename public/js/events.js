@@ -279,7 +279,9 @@ const Events = {
 
   async loadAdmin(){
     const dateKeys = (await EvStore.listDateKeys()).sort();
-    const datas = await Promise.all(dateKeys.map(k => EvStore.getDate(k)));
+    // getDateAdmin (et non getDate) : lit en plus code + code_used pour afficher
+    // le code à l'admin. Ces colonnes sont fermées à anon (fix-column-leak.sql).
+    const datas = await Promise.all(dateKeys.map(k => EvStore.getDateAdmin(k)));
     const groups = [];
     dateKeys.forEach((dateKey, i) => {
       const data = datas[i]; if (!data) return;

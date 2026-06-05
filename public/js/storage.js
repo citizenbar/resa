@@ -101,9 +101,12 @@ const RcStore = {
   // Réservation NON refusée d'une date -> objet { emission,animateur,...,status } | null.
   async getDate(dateKey){
     if (!storageReady()) { LAST_STORAGE_ERROR = 'backend non configuré'; return null; }
+    // Calendrier PUBLIC (anon) : on ne lit QUE les colonnes vitrine. micros et
+    // materiel sont des notes logistiques internes, fermées à anon au niveau
+    // colonne (supabase/fix-column-leak.sql). L'admin les lit via listAll().
     const { data, error } = await window.sb
       .from('rc_reservations')
-      .select('id,event_date,emission,animateur,style,micros,materiel,status')
+      .select('id,event_date,emission,animateur,style,status')
       .eq('event_date', dateKey)
       .neq('status', 'refused')
       .maybeSingle();
@@ -161,24 +164,47 @@ const RcStore = {
 // EVENTS (système à code via RPC)
 // =====================================================================
 const EvStore = {
-  // Tous les slots d'une date -> { slots: { id: {soiree,code,code_used,nom,debut,fin,styles,status, form?} } }
-  // (admin voit code + tout ; anon ne voit que les validés sans code grâce aux RLS)
+  // Tous les slots d'une date -> { slots: { id: {soiree,nom,debut,fin,styles,status, form?} } }
+  // CALENDRIER PUBLIC (anon) : on ne lit NI code NI code_used (fermés à anon au
+  // niveau colonne, cf. supabase/fix-column-leak.sql). Le code n'est utile qu'à
+  // l'admin, qui passe par getDateAdmin(). On dérive "fiche remplie" du styles
+  // non vide (le DJ renseigne son style quand il remplit) plutôt que de code_used.
   async getDate(dateKey){
+    if (!storageReady()) { LAST_STORAGE_ERROR = 'backend non configuré'; return { slots:{} }; }
+    const { data, error } = await window.sb
+      .from('ev_slots')
+      .select('id,event_date,soiree,dj_nom,debut,fin,styles,format,status')
+      .eq('event_date', dateKey);
+    if (error) { fail(error); return { slots:{} }; }
+    return EvStore._mapSlots(data);
+  },
+
+  // ADMIN (authenticated) : comme getDate mais lit en plus code + code_used,
+  // colonnes réservées à l'admin. Utilisé par loadAdmin pour afficher le code.
+  async getDateAdmin(dateKey){
     if (!storageReady()) { LAST_STORAGE_ERROR = 'backend non configuré'; return { slots:{} }; }
     const { data, error } = await window.sb
       .from('ev_slots')
       .select('id,event_date,soiree,code,code_used,dj_nom,debut,fin,styles,format,status')
       .eq('event_date', dateKey);
     if (error) { fail(error); return { slots:{} }; }
+    return EvStore._mapSlots(data);
+  },
+
+  // Remappe les lignes ev_slots en { slots: { id: {...} } }. code/code_used sont
+  // repris s'ils sont présents (chemin admin), sinon omis (chemin public anon).
+  _mapSlots(data){
     const slots = {};
     for (const r of (data || [])) {
       slots[r.id] = {
-        id: r.id, soiree: r.soiree, code: r.code, code_used: r.code_used,
+        id: r.id, soiree: r.soiree,
+        code: r.code, code_used: r.code_used,   // undefined côté public, c'est voulu
         nom: r.dj_nom || 'En attente…',
         debut: r.debut ? r.debut.slice(0,5) : '', fin: r.fin ? r.fin.slice(0,5) : '',
         status: r.status,
-        // l'UI teste s.form?.styles pour savoir si la fiche est remplie
-        form: r.code_used ? { styles: r.styles || '', format: r.format || '' } : null,
+        // l'UI teste s.form?.styles pour savoir si la fiche est remplie.
+        // Une fiche remplie a un styles renseigné par le DJ.
+        form: r.styles ? { styles: r.styles || '', format: r.format || '' } : null,
       };
     }
     return { slots };
