@@ -236,6 +236,63 @@ const EvStore = {
     return { slotId: row.slot_id, soiree: row.soiree, dateKey: row.event_date };
   },
 
+  // DJ : uploader une photo via signed upload URL (la Vercel Function valide le
+  // code et signe ; le navigateur uploade direct, sans secret).
+  // -> { ok:true, url } | { ok:false, reason:'too_big'|'bad_type'|'code'|'net'|'config' }
+  async uploadPhoto(code, file){
+    if (!storageReady()) return { ok:false, reason:'config' };
+    // Validation client : type + taille. Le type déclaré (file.type) est
+    // falsifiable, donc on confirme par les MAGIC BYTES (vrai contenu) ci-dessous.
+    // La vraie barrière serveur reste les contraintes du bucket (allowed_mime_types
+    // + file_size_limit, cf. storage-artist-photos.sql) ; ceci est la défense client.
+    const ALLOWED = { 'image/jpeg':'jpg', 'image/png':'png', 'image/webp':'webp' };
+    const ext = ALLOWED[file.type];
+    if (!ext) return { ok:false, reason:'bad_type' };
+    if (file.size > 5 * 1024 * 1024) return { ok:false, reason:'too_big' };
+    // Magic bytes : vérifier la signature binaire réelle du fichier.
+    const realExt = await EvStore._sniffImage(file);
+    if (!realExt || realExt !== ext) return { ok:false, reason:'bad_type' };
+    const contentType = file.type;  // cohérent avec ext validé + magic bytes
+    try {
+      // 1) demander une signature à la Vercel Function (vérifie le code + crédit)
+      const r = await fetch('/api/upload-photo', {
+        method:'POST', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ code, ext }),
+      });
+      if (!r.ok) {
+        if (r.status === 403) return { ok:false, reason:'code' };
+        return { ok:false, reason:'net' };
+      }
+      const { bucket, path, token, publicUrl } = await r.json();
+      if (!bucket || !path || !token) return { ok:false, reason:'net' };
+      // 2) uploader le fichier DIRECTEMENT vers Storage via le token signé.
+      //    contentType imposé depuis l'ext validée (pas un type arbitraire).
+      const { error } = await window.sb.storage.from(bucket)
+        .uploadToSignedUrl(path, token, file, { contentType });
+      if (error) { fail(error); return { ok:false, reason:'net' }; }
+      return { ok:true, url: publicUrl };
+    } catch (e) {
+      fail(e); return { ok:false, reason:'net' };
+    }
+  },
+
+  // Lit les premiers octets du fichier et renvoie 'jpg'|'png'|'webp' si la
+  // signature binaire correspond à une vraie image, sinon null. Empêche
+  // qu'un fichier HTML/SVG renommé .png passe la validation par extension.
+  async _sniffImage(file){
+    try {
+      const buf = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+      // PNG : 89 50 4E 47
+      if (buf[0]===0x89 && buf[1]===0x50 && buf[2]===0x4E && buf[3]===0x47) return 'png';
+      // JPEG : FF D8 FF
+      if (buf[0]===0xFF && buf[1]===0xD8 && buf[2]===0xFF) return 'jpg';
+      // WebP : "RIFF"...."WEBP"
+      if (buf[0]===0x52 && buf[1]===0x49 && buf[2]===0x46 && buf[3]===0x46 &&
+          buf[8]===0x57 && buf[9]===0x45 && buf[10]===0x42 && buf[11]===0x50) return 'webp';
+      return null;
+    } catch (_) { return null; }
+  },
+
   // DJ : remplir la fiche (scelle le code). f = fiche complète. -> { ok, reason }
   async fillSlot(code, f){
     if (!storageReady()) return { ok:false, reason:'config' };

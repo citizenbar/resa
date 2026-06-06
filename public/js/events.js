@@ -156,7 +156,8 @@ const Events = {
   renderForm(app){
     const a = this.activeSlot, f = this.form;
     const fields1 = [['nom','NOM DU DJ / GROUPE *','Ton nom de scène'],['email','EMAIL *','contact@email.com'],['tel','TÉLÉPHONE *','06 xx xx xx xx']];
-    const fields2 = [['photo','LIEN PHOTO / VISUEL','Drive, Instagram, WeTransfer…'],['styles','STYLE MUSICAL *','House, Techno, Jungle…'],['format','FORMAT — CDJ/USB, VINYL, CONTRÔLEUR','Précise ton setup'],['instagram','INSTAGRAM','@tonpseudo'],['soundcloud','SOUNDCLOUD / LIEN PROMO','soundcloud.com/…'],['remarques','REMARQUES / CHANGEOVER','Infos techniques…']];
+    // photo gérée à part (upload fichier OU lien, obligatoire) ; le reste en champs texte.
+    const fields2 = [['styles','STYLE MUSICAL *','House, Techno, Jungle…'],['format','FORMAT — CDJ/USB, VINYL, CONTRÔLEUR','Précise ton setup'],['instagram','INSTAGRAM','@tonpseudo'],['soundcloud','SOUNDCLOUD / LIEN PROMO','soundcloud.com/…'],['remarques','REMARQUES / CHANGEOVER','Infos techniques…']];
     app.innerHTML = `
       <div style="margin-bottom:20px;padding:14px 16px;background:var(--bg-2);border-left:3px solid var(--accent)">
         <div class="section-meta">TON CRÉNEAU</div>
@@ -167,6 +168,13 @@ const Events = {
       <div class="grid-2">
         <div class="field"><label>Heure de début *</label><select id="ev_debut">${['<option value="">Choisir…</option>'].concat(this.HORAIRES.map(h => `<option>${h}</option>`)).join('')}</select></div>
         <div class="field"><label>Heure de fin *</label><select id="ev_fin">${['<option value="">Choisir…</option>'].concat(this.HORAIRES.map(h => `<option>${h}</option>`)).join('')}</select></div>
+      </div>
+      <div class="field">
+        <label>PHOTO / VISUEL DE L'ARTISTE *</label>
+        <div class="section-meta" style="margin-bottom:6px">Téléverse une image (JPG, PNG ou WebP, 5 Mo max) OU colle un lien.</div>
+        <input type="file" id="ev_photo_file" accept="image/jpeg,image/png,image/webp" onchange="Events.onPhotoPick()">
+        <div id="ev_photo_status" class="section-meta" style="margin-top:4px"></div>
+        <div style="margin-top:8px"><input id="ev_photo" value="${escapeHtml(f.photo)}" placeholder="…ou lien : Drive, Instagram, WeTransfer…"></div>
       </div>
       ${fields2.map(([k,l,p]) => `<div class="field"><label>${l}</label><input id="ev_${k}" value="${escapeHtml(f[k])}" placeholder="${p}"></div>`).join('')}
       <div id="ev_err"></div>
@@ -180,11 +188,28 @@ const Events = {
       soundcloud:g('ev_soundcloud'), remarques:g('ev_remarques') };
   },
 
+  // Le DJ choisit un fichier : validation immédiate (type + taille) + feedback.
+  // Si un fichier valide est choisi, on vide le champ lien (les deux sont en OR).
+  onPhotoPick(){
+    const input = document.getElementById('ev_photo_file');
+    const status = document.getElementById('ev_photo_status');
+    const link = document.getElementById('ev_photo');
+    const file = input?.files?.[0];
+    if (!file){ if (status) status.textContent = ''; return; }
+    const okType = ['image/jpeg','image/png','image/webp'].includes(file.type);
+    if (!okType){ status.innerHTML = '<span style="color:var(--refused)">Format non supporté (JPG, PNG, WebP).</span>'; input.value = ''; return; }
+    if (file.size > 5*1024*1024){ status.innerHTML = '<span style="color:var(--refused)">Fichier trop lourd (5 Mo max).</span>'; input.value = ''; return; }
+    status.innerHTML = `<span style="color:var(--ok)">✓ ${escapeHtml(file.name)} prêt à être envoyé.</span>`;
+    if (link) link.value = '';   // un fichier prime sur le lien
+  },
+
   async submitForm(){
     if (this._submitting) return;
     const f = this.readForm(); this.form = f;
     const err = document.getElementById('ev_err');
     const btn = document.querySelector('#app .btn');
+    const fileInput = document.getElementById('ev_photo_file');
+    const photoFile = fileInput?.files?.[0] || null;
     if (!f.nom || !f.email || !f.tel || !f.styles || !f.debut || !f.fin){
       err.innerHTML = '<div class="error">Merci de remplir tous les champs obligatoires (*).</div>'; return;
     }
@@ -194,8 +219,31 @@ const Events = {
     if (timeToMin(f.fin) <= timeToMin(f.debut)){
       err.innerHTML = '<div class="error">L\'heure de fin doit être après l\'heure de début.</div>'; return;
     }
+    // Photo OBLIGATOIRE : un fichier OU un lien (au moins un des deux).
+    if (!photoFile && !f.photo){
+      err.innerHTML = '<div class="error">La photo de l\'artiste est obligatoire : téléverse une image ou colle un lien.</div>'; return;
+    }
     const a = this.activeSlot;
     this._submitting = true; if (btn){ btn.disabled = true; btn.textContent = 'Envoi…'; }
+
+    // Si un fichier est fourni, on l'uploade d'abord (il prime sur le lien).
+    if (photoFile){
+      if (btn) btn.textContent = 'Envoi de la photo…';
+      const up = await EvStore.uploadPhoto(a.code, photoFile);
+      if (!up.ok){
+        this._submitting = false;
+        if (btn){ btn.disabled = false; btn.textContent = 'Envoyer ma fiche'; }
+        err.innerHTML =
+          up.reason === 'too_big' ? '<div class="error">Photo trop lourde (5 Mo max).</div>'
+          : up.reason === 'bad_type' ? '<div class="error">Format de photo non supporté (JPG, PNG, WebP).</div>'
+          : up.reason === 'code' ? '<div class="error">Code Events invalide ou déjà utilisé.</div>'
+          : '<div class="error">Échec de l\'envoi de la photo. Réessaie, ou colle un lien à la place.</div>';
+        return;
+      }
+      f.photo = up.url;   // l'URL Storage remplace tout lien éventuel
+    }
+
+    if (btn) btn.textContent = 'Envoi…';
     const res = await EvStore.fillSlot(a.code, f);   // RPC : scelle le code (usage unique atomique)
     this._submitting = false;
     if (!res.ok){
