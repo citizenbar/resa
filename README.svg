@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 720" font-family="'JetBrains Mono', ui-monospace, monospace">
+  <defs>
+    <style>
+      .title  { font-family: 'Bowlby One', Impact, sans-serif; }
+      .serif  { font-family: 'Fraunces', Georgia, serif; }
+      .lbl    { font-size: 13px; fill: #161412; }
+      .sub    { font-size: 11px; fill: #7a7468; }
+      .pill   { font-size: 11px; fill: #161412; }
+      .edge   { stroke: #7a7468; stroke-width: 1.6; fill: none; }
+      .edgelbl{ font-size: 10px; fill: #7a7468; }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#7a7468"/>
+    </marker>
+  </defs>
+
+  <!-- canvas -->
+  <rect width="920" height="720" fill="#f7f5f0"/>
+  <rect x="0" y="0" width="920" height="6" fill="#d92e15"/>
+
+  <!-- header -->
+  <text x="40" y="58" class="title" font-size="34" fill="#161412">resa</text>
+  <text x="132" y="58" class="serif" font-size="22" fill="#161412">— Citizen Bar (Tours)</text>
+  <text x="40" y="82" class="sub">Reservation bar musical · stack &amp; relations</text>
+  <line x1="40" y1="98" x2="880" y2="98" stroke="#d9d4c8" stroke-width="1"/>
+
+  <!-- ============ LAYER: CLIENTS ============ -->
+  <text x="40" y="135" class="sub" letter-spacing="2">CLIENTS</text>
+
+  <!-- humans -->
+  <rect x="40" y="148" width="250" height="74" rx="8" fill="#efece4" stroke="#d9d4c8"/>
+  <text x="56" y="174" class="lbl serif" font-size="15">Navigateur (DJ / public / admin)</text>
+  <text x="56" y="196" class="sub">onglets : Agenda · 3 modules · dashboards</text>
+  <text x="56" y="212" class="sub">SDK Supabase via CDN</text>
+
+  <!-- AI agent -->
+  <rect x="630" y="148" width="250" height="74" rx="8" fill="#efece4" stroke="#d9d4c8"/>
+  <text x="646" y="174" class="lbl serif" font-size="15">Agent IA</text>
+  <text x="646" y="196" class="sub">lit /llms.txt puis</text>
+  <text x="646" y="212" class="sub">/events.yaml · /events.json</text>
+
+  <!-- ============ LAYER: VERCEL (static + functions) ============ -->
+  <text x="40" y="270" class="sub" letter-spacing="2">VERCEL · deploiement statique (pas de build)</text>
+  <rect x="40" y="282" width="840" height="158" rx="10" fill="#ffffff" stroke="#d9d4c8"/>
+
+  <!-- front bundle -->
+  <rect x="62" y="304" width="360" height="116" rx="8" fill="#f7f5f0" stroke="#d9d4c8"/>
+  <text x="78" y="328" class="lbl">public/  · front vanilla JS</text>
+  <text x="78" y="348" class="sub">router.js · storage.js · auth.js</text>
+  <text x="78" y="364" class="sub">open-platine · radio-campus · events</text>
+  <text x="78" y="380" class="sub">portal (agenda) · admin · helpers</text>
+  <text x="78" y="404" class="sub">symboles sur window · zero framework</text>
+
+  <!-- module color chips -->
+  <rect x="320" y="392" width="14" height="14" rx="3" fill="#d92e15"/>
+  <rect x="340" y="392" width="14" height="14" rx="3" fill="#b07d12"/>
+  <rect x="360" y="392" width="14" height="14" rx="3" fill="#2f5fd0"/>
+
+  <!-- serverless functions -->
+  <rect x="500" y="304" width="360" height="116" rx="8" fill="#f7f5f0" stroke="#d9d4c8"/>
+  <text x="516" y="328" class="lbl">api/  · Vercel Functions (Node)</text>
+  <text x="516" y="348" class="sub">events.js  -> /events.yaml /.json</text>
+  <text x="516" y="364" class="sub">upload-photo.js  -> photo artiste</text>
+  <text x="516" y="388" class="sub">Fluid Compute · fetch natif</text>
+  <text x="516" y="404" class="sub">zero dependance npm</text>
+
+  <!-- ============ LAYER: SUPABASE ============ -->
+  <text x="40" y="490" class="sub" letter-spacing="2">SUPABASE · backend (EU)</text>
+  <rect x="40" y="502" width="840" height="178" rx="10" fill="#ffffff" stroke="#d9d4c8"/>
+
+  <!-- auth -->
+  <rect x="62" y="524" width="180" height="80" rx="8" fill="#efece4" stroke="#d9d4c8"/>
+  <text x="78" y="548" class="lbl">Auth</text>
+  <text x="78" y="568" class="sub">email / mot de passe</text>
+  <text x="78" y="584" class="sub">role authenticated</text>
+  <text x="78" y="600" class="sub">= admins modules</text>
+
+  <!-- postgres -->
+  <rect x="262" y="524" width="380" height="138" rx="8" fill="#efece4" stroke="#d9d4c8"/>
+  <text x="278" y="548" class="lbl">Postgres + PostgREST</text>
+  <text x="278" y="570" class="sub">tables resa (op / rc / ev)  +  *_contacts (prive)</text>
+  <text x="278" y="588" class="sub">vue public_events  (colonnes publiques only)</text>
+  <text x="278" y="606" class="sub">RPC SECURITY DEFINER : claim code Events</text>
+  <text x="278" y="630" class="pill" fill="#2e7d32">RLS par role · grants colonne · code 4 chiffres</text>
+  <text x="278" y="648" class="sub">statuts : pending -> validated -> refused</text>
+
+  <!-- storage -->
+  <rect x="662" y="524" width="180" height="80" rx="8" fill="#efece4" stroke="#d9d4c8"/>
+  <text x="678" y="548" class="lbl">Storage</text>
+  <text x="678" y="568" class="sub">artist-photos</text>
+  <text x="678" y="584" class="sub">bucket public</text>
+  <text x="678" y="600" class="sub">upload via api/</text>
+
+  <!-- ============ EDGES ============ -->
+  <!-- browser -> front -->
+  <path class="edge" d="M165 222 L165 304" marker-end="url(#arrow)"/>
+  <text x="172" y="266" class="edgelbl">HTML/JS</text>
+
+  <!-- agent -> functions -->
+  <path class="edge" d="M755 222 L740 304" marker-end="url(#arrow)"/>
+  <text x="762" y="266" class="edgelbl">GET yaml/json</text>
+
+  <!-- front -> auth -->
+  <path class="edge" d="M150 420 L150 524" marker-end="url(#arrow)"/>
+  <text x="60" y="470" class="edgelbl">sign in</text>
+
+  <!-- front -> postgres (anon key, RLS) -->
+  <path class="edge" d="M300 420 L360 524" marker-end="url(#arrow)"/>
+  <text x="310" y="470" class="edgelbl">REST · cle anon (RLS)</text>
+
+  <!-- functions -> postgres (public_events) -->
+  <path class="edge" d="M640 420 L520 524" marker-end="url(#arrow)"/>
+  <text x="548" y="470" class="edgelbl">read public_events</text>
+
+  <!-- functions -> storage -->
+  <path class="edge" d="M740 420 L745 524" marker-end="url(#arrow)"/>
+  <text x="752" y="470" class="edgelbl">put photo</text>
+
+  <!-- footer -->
+  <line x1="40" y1="700" x2="880" y2="700" stroke="#d9d4c8" stroke-width="1"/>
+  <text x="40" y="715" class="sub">RGPD : contacts (email/tel) jamais exposes en lecture publique · service_role jamais cote client</text>
+</svg>
