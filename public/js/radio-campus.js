@@ -6,7 +6,9 @@
 // =====================================================================
 
 const RadioCampus = {
-  view: 'cal',          // cal | form | ok | login | admin
+  view: 'cal',          // cal | form | ok | admin (piloté par router.js)
+  lastRef: null,        // uuid de la dernière demande, pour la référence affichée
+  occ: {},              // dateKey -> 'pending' | 'validated' (vue rc_occupancy)
   mon: new Date().getMonth(),
   yr: new Date().getFullYear(),
   selDate: null,
@@ -22,10 +24,23 @@ const RadioCampus = {
   minDate(){ const m = todayMidnight(); m.setDate(m.getDate() + 14); return m; },
 
   async loadDate(d){ const k = dk(d); this.cache[k] = await RcStore.getDate(k); return this.cache[k]; },
-  isBlocked(d){ const r = this.cache[dk(d)]; return r && r.status !== 'refused'; },
+
+  // Occupation d'une date : 'validated' (prise), 'pending' (demande en
+  // cours, encore réservable) ou null (libre).
+  // Vient de la vue rc_occupancy, PAS du cache : les policies RLS cachent
+  // les lignes 'pending' au visiteur, donc this.cache est nul sur une date
+  // demandée mais non validée. Sans cette source, le calendrier affiche
+  // « libre » une date déjà demandée (bug UX constaté en prod).
+  occupancyOf(d){ return this.occ[dk(d)] || null; },
+  isBlocked(d){ return this.occupancyOf(d) === 'validated'; },
+  isPendingOn(d){ return this.occupancyOf(d) === 'pending'; },
+
   isAvailable(d){
     if (this.isClosed(d)) return false;
     if (isPast(d) || d < this.minDate()) return false;
+    // Une date 'pending' RESTE réservable : le visiteur est averti dans le
+    // formulaire que sa demande pourra être refusée. Seule une date
+    // 'validated' est fermée.
     return !this.isBlocked(d);
   },
 
@@ -47,7 +62,6 @@ const RadioCampus = {
     if (this.view === 'cal') return this.renderCal(app);
     if (this.view === 'form') return this.renderForm(app);
     if (this.view === 'ok') return this.renderOk(app);
-    if (this.view === 'login') return this.renderLogin(app);
     if (this.view === 'admin') return this.renderAdmin(app);
   },
 
@@ -60,9 +74,10 @@ const RadioCampus = {
         <p class="lead">Anime ton émission en direct du bar. Du mardi au dimanche, fermé lundi et mercredi. Réservation deux semaines à l'avance minimum.</p>
       </section>
       <div class="section-head"><h2 class="section-title">Calendrier</h2>
-        <div class="section-meta"><button class="btn-mini" onclick="RadioCampus.toLogin()">Espace admin</button></div></div>
+        <div class="section-meta"></div></div>
       <div class="legend">
         <div class="item"><span class="sw" style="background:var(--accent)"></span>Disponible</div>
+        <div class="item"><span class="sw" style="background:var(--pending)"></span>Demande en cours</div>
         <div class="item"><span class="sw" style="background:var(--refused)"></span>Réservé</div>
         <div class="item"><span class="sw" style="background:var(--bg-3);border:1px solid var(--muted)"></span>Fermé / passé</div>
       </div>
@@ -89,6 +104,10 @@ const RadioCampus = {
     const weeks = this.weeksOf(this.yr, this.mon);
     const flat = weeks.flat().filter(d => d.getMonth() === this.mon);
     // Liste les clés existantes (évite un get sur chaque jour libre)
+    // Occupation publique d'abord : c'est elle qui fait foi pour libre/pris
+    // (le cache ne contient que ce que la RLS laisse voir, donc pas les
+    // demandes en attente).
+    this.occ = await RcStore.occupancy();
     const existing = new Set(await RcStore.listDateKeys());
     await Promise.all(flat.map(d => {
       const k = dk(d);
@@ -117,7 +136,13 @@ const RadioCampus = {
     const av = this.isAvailable(date);
     const isToday = dk(date) === dk(new Date());
     let dotColor = null;
-    if (inM && !past && !closed){ if (blocked) dotColor = 'var(--refused)'; else if (soon) dotColor = 'var(--muted)'; else dotColor = 'var(--accent)'; }
+    const pending = this.isPendingOn(date);
+    if (inM && !past && !closed){
+      if (blocked) dotColor = 'var(--refused)';
+      else if (pending) dotColor = 'var(--pending)';   // demande en cours, encore réservable
+      else if (soon) dotColor = 'var(--muted)';
+      else dotColor = 'var(--accent)';
+    }
     const numColor = !inM ? 'var(--muted)' : (past || closed || soon) ? 'var(--muted)' : 'var(--fg)';
     const r = this.cache[dk(date)];
     const onclick = av ? `onclick="RadioCampus.openForm('${dk(date)}')"` : '';
@@ -125,16 +150,28 @@ const RadioCampus = {
       <span style="font-family:'Fraunces',serif;font-size:14px;color:${numColor};font-weight:${isToday ? '600' : '400'}">${date.getDate()}</span>
       ${dotColor ? `<div style="width:5px;height:5px;border-radius:50%;background:${dotColor}"></div>` : ''}
       ${inM && blocked && r ? `<div style="font-size:7px;font-family:'JetBrains Mono',monospace;color:var(--refused);max-width:54px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.emission || '')}</div>` : ''}
+      ${inM && !blocked && pending ? `<div style="font-size:7px;font-family:'JetBrains Mono',monospace;color:var(--pending)">demandé</div>` : ''}
     </div>`;
   },
 
   async openForm(dateKey){
     this.selDate = parseDk(dateKey);
     await this.loadDate(this.selDate);
+    // Occupation à jour : une date peut avoir été validée depuis l'affichage.
+    this.occ = await RcStore.occupancy();
     if (this.isBlocked(this.selDate)){ await this.renderGrid(); return; } // pris entre temps
-    this.form = this.emptyForm();
+    // On NE réinitialise le formulaire que s'il est vierge. Si l'utilisateur
+    // a déjà saisi quelque chose (cas d'un créneau pris au moment de l'envoi,
+    // où on l'invite à choisir une autre date), sa saisie est conservée.
+    if (!this.hasInput()) this.form = this.emptyForm();
     this.view = 'form';
     this.render(document.getElementById('app'));
+  },
+
+  // Vrai si au moins un champ du formulaire a été rempli.
+  hasInput(){
+    const f = this.form || {};
+    return Object.keys(this.emptyForm()).some(k => String(f[k] || '').trim() !== '');
   },
 
   renderForm(app){
@@ -154,6 +191,11 @@ const RadioCampus = {
       <div class="eyebrow">Nouvelle réservation</div>
       <h2 class="section-title" style="font-size:26px;margin-bottom:4px">${fmtDay(d)} ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}</h2>
       <div class="section-meta" style="color:var(--accent);margin-bottom:20px">19H00 – 21H30</div>
+      ${this.isPendingOn(d) ? `<div class="warn-banner">
+        <strong>Une autre demande est déjà en attente sur cette date.</strong>
+        Tu peux quand même déposer la tienne : l'équipe tranchera. Sache simplement
+        qu'elle pourra être refusée si l'autre demande est validée en premier.
+      </div>` : ''}
       ${fields.map(([k,l,p]) => `<div class="field"><label>${l}</label><input id="rc_${k}" value="${escapeHtml(f[k])}" placeholder="${p}"></div>`).join('')}
       <div id="rc_err"></div>
       <button class="btn" onclick="RadioCampus.submit()">Confirmer la réservation</button>
@@ -187,13 +229,22 @@ const RadioCampus = {
     if (!res.ok){
       if (btn){ btn.disabled = false; btn.textContent = 'Confirmer la réservation'; }
       if (res.reason === 'taken'){
-        err.innerHTML = '<div class="error">Trop tard, ce jour vient d\'être réservé. Choisis une autre date.</div>';
-        setTimeout(() => { this.back(); }, 2000); return;
+        // On NE renvoie PAS au calendrier : la saisie serait perdue. On
+        // rafraîchit l'occupation (la date passe en « réservé ») et on
+        // laisse l'utilisateur choisir une autre date en gardant son texte.
+        this.occ = await RcStore.occupancy();
+        err.innerHTML = `<div class="error">
+          Ce créneau vient d'être validé pour quelqu'un d'autre. Ta saisie est conservée :
+          reviens au calendrier et choisis une autre date, le formulaire sera pré-rempli.
+        </div>`;
+        return;
       }
       err.innerHTML = res.reason === 'config' ? '<div class="error">Backend non configuré (Supabase). Vérifie supabaseUrl et supabaseAnonKey dans config.js.</div>'
         : `<div class="error">Échec de l'enregistrement.<br>Détail : ${escapeHtml(LAST_STORAGE_ERROR || 'inconnu')}</div>`;
       return;
     }
+    this.lastRef = res.id;   // reference a afficher sur l'ecran de confirmation
+    this.form = this.emptyForm();   // succès : on repart d'un formulaire vierge
     this.view = 'ok'; this.render(document.getElementById('app'));
   },
 
@@ -202,6 +253,7 @@ const RadioCampus = {
       <div class="eyebrow" style="justify-content:center">Demande envoyée</div>
       <h2>Réservation en attente</h2>
       <p>Ta demande a bien été reçue. L'équipe du Citizen Bar revient vers toi pour confirmer le créneau.</p>
+      ${refBlockHtml('rc', this.lastRef)}
       <button class="btn" style="max-width:280px;margin:0 auto" onclick="RadioCampus.back()">Retour au calendrier</button>
     </div>`;
   },
@@ -209,10 +261,6 @@ const RadioCampus = {
   back(){ this.view = 'cal'; this.render(document.getElementById('app')); },
 
   // --- admin ---
-  toLogin(){ this.view = Auth.isAdmin() ? 'admin' : 'login'; this.render(document.getElementById('app')); },
-  renderLogin(app){ Admin.renderLogin(app, 'RadioCampus'); },
-  async login(){ return Admin.login('RadioCampus'); },
-
   async renderAdmin(app){
     app.innerHTML = `
       <div class="eyebrow">Administration</div>
@@ -220,8 +268,6 @@ const RadioCampus = {
       <div class="section-head"><h2 class="section-title">Réservations</h2>
         <div class="section-meta">
           <button class="btn-mini" onclick="RadioCampus.loadAdmin()">↻ Rafraîchir</button>
-          <button class="btn-mini" onclick="RadioCampus.back()">Vue publique</button>
-          <button class="btn-mini" onclick="Admin.signOut('RadioCampus')">Déconnexion</button>
         </div></div>
       <div id="rc_admin"><div class="portal-empty">Chargement…</div></div>`;
     this.loadAdmin();
@@ -250,7 +296,7 @@ const RadioCampus = {
     return `<div class="admin-group"><div class="admin-group-title">${isPastList ? 'Passé' : 'À venir'}</div>` +
       arr.map(({ dateKey, date, r }) => {
         const bc = r.status === 'validated' ? 'var(--ok)' : r.status === 'refused' ? 'var(--refused)' : 'var(--pending)';
-        const meta = [['style',r.style],['micros',r.micros],['email',r.email],['tél',r.tel], r.materiel && ['matériel',r.materiel], r.remarques && ['remarques',r.remarques]].filter(Boolean);
+        const meta = [['réf',refFromId('rc', r.id)],['style',r.style],['micros',r.micros],['email',r.email],['tél',r.tel], r.materiel && ['matériel',r.materiel], r.remarques && ['remarques',r.remarques]].filter(Boolean);
         return `<div class="booking-card" style="--bc:${bc}${isPastList ? ';opacity:0.6' : ''}">
           <div class="bc-head">
             <div><div class="bc-name">${escapeHtml(r.emission)}</div><div class="bc-sub">${escapeHtml(r.animateur)} · ${fmtDay(date)} ${date.getDate()} ${MONTHS[date.getMonth()]}</div></div>

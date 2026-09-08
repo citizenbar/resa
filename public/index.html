@@ -42,8 +42,14 @@
       <button class="tab" data-tab="op" onclick="go('op')">Open Platine</button>
       <button class="tab" data-tab="rc" onclick="go('rc')">Radio Campus</button>
       <button class="tab" data-tab="ev" onclick="go('ev')">Events</button>
+      <!-- Point d'entrée admin unique (remplace les 3 boutons "Espace admin"
+           qui vivaient dans chaque module). Son libellé et son action changent
+           selon l'état de connexion : Admin.renderHeaderButton() le pilote. -->
+      <button class="tab tab-admin" id="adminEntry" onclick="Admin.headerClick()" title="Espace admin">⚡</button>
     </nav>
   </header>
+  <!-- Bandeau visible uniquement en mode admin (rempli par Admin.renderBanner). -->
+  <div id="adminBar"></div>
 
   <main id="app"></main>
 

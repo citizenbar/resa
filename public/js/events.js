@@ -10,7 +10,8 @@
 
 const Events = {
   HORAIRES: ['21:30','22:00','22:30','23:00','23:30','00:00','00:30','01:00','01:30','02:00'],
-  view: 'cal',          // cal | code | form | ok | login | admin
+  view: 'cal',          // cal | code | form | ok | admin (piloté par router.js)
+  lastRef: null,        // uuid de la dernière demande, pour la référence affichée
   mon: new Date().getMonth(),
   yr: new Date().getFullYear(),
   cache: {},            // dateKey -> { slots }
@@ -46,7 +47,6 @@ const Events = {
     if (this.view === 'code') return this.renderCode(app);
     if (this.view === 'form') return this.renderForm(app);
     if (this.view === 'ok') return this.renderOk(app);
-    if (this.view === 'login') return this.renderLogin(app);
     if (this.view === 'admin') return this.renderAdmin(app);
   },
 
@@ -59,7 +59,7 @@ const Events = {
         <p class="lead">Les soirées du Citizen Bar et qui y joue. Tu as reçu un code de l'équipe ? <a style="color:var(--accent);cursor:pointer;text-decoration:underline" onclick="Events.toCode()">Remplis ta fiche.</a></p>
       </section>
       <div class="section-head"><h2 class="section-title">Ce mois-ci</h2>
-        <div class="section-meta"><button class="btn-mini" onclick="Events.toCode()">J'ai un code</button> <button class="btn-mini" onclick="Events.toLogin()">Espace admin</button></div></div>
+        <div class="section-meta"><button class="btn-mini" onclick="Events.toCode()">J'ai un code</button></div></div>
       <div id="ev_cal"></div>
       <div class="section-meta" style="margin-top:10px">21h30 – 02h00 · Fermé le lundi</div>
     `;
@@ -254,6 +254,7 @@ const Events = {
         : `<div class="error">Échec de l'enregistrement.<br>Détail : ${escapeHtml(LAST_STORAGE_ERROR || 'inconnu')}</div>`;
       return;
     }
+    this.lastRef = res.id;   // reference a afficher sur l'ecran de confirmation
     this.view = 'ok'; this.render(document.getElementById('app'));
   },
 
@@ -262,6 +263,7 @@ const Events = {
       <div class="eyebrow" style="justify-content:center">Fiche envoyée</div>
       <h2>En attente de validation</h2>
       <p>Ta fiche a bien été reçue. L'équipe du Citizen Bar te contacte pour confirmer.</p>
+      ${refBlockHtml('ev', this.lastRef)}
       <button class="btn" style="max-width:280px;margin:0 auto" onclick="Events.back()">Retour à l'agenda</button>
     </div>`;
   },
@@ -269,10 +271,6 @@ const Events = {
   back(){ this.view = 'cal'; this.activeSlot = null; this.render(document.getElementById('app')); },
 
   // ---- admin ----
-  toLogin(){ this.view = Auth.isAdmin() ? 'admin' : 'login'; this.render(document.getElementById('app')); },
-  renderLogin(app){ Admin.renderLogin(app, 'Events'); },
-  async login(){ return Admin.login('Events'); },
-
   async renderAdmin(app){
     app.innerHTML = `
       <div class="eyebrow">Administration</div>
@@ -280,8 +278,6 @@ const Events = {
       <div class="section-head"><h2 class="section-title">Créneaux & codes</h2>
         <div class="section-meta">
           <button class="btn-mini" onclick="Events.loadAdmin()">↻ Rafraîchir</button>
-          <button class="btn-mini" onclick="Events.back()">Vue publique</button>
-          <button class="btn-mini" onclick="Admin.signOut('Events')">Déconnexion</button>
         </div></div>
       <div style="background:var(--bg-2);border:1px solid color-mix(in srgb,var(--accent) 30%,transparent);padding:18px;margin-bottom:24px">
         <div class="section-meta" style="color:var(--accent);font-weight:700;margin-bottom:12px">CRÉER UN CRÉNEAU</div>
@@ -371,7 +367,7 @@ const Events = {
   slotCard(dateKey, id, s, isPastCard){
     const bc = s.status === 'validated' ? 'var(--ok)' : s.status === 'refused' ? 'var(--refused)' : 'var(--pending)';
     const filled = !!s.form;
-    const meta = filled ? [['email',s.form.email],['tél',s.form.tel], s.form.format && ['format',s.form.format], s.form.instagram && ['instagram',s.form.instagram], s.form.soundcloud && ['soundcloud',s.form.soundcloud], s.form.photo && ['photo',s.form.photo], s.form.remarques && ['remarques',s.form.remarques]].filter(Boolean) : [];
+    const meta = filled ? [['réf',refFromId('ev', s.id)],['email',s.form.email],['tél',s.form.tel], s.form.format && ['format',s.form.format], s.form.instagram && ['instagram',s.form.instagram], s.form.soundcloud && ['soundcloud',s.form.soundcloud], s.form.photo && ['photo',s.form.photo], s.form.remarques && ['remarques',s.form.remarques]].filter(Boolean) : [];
     return `<div class="booking-card" style="--bc:${bc}">
       <div class="bc-head">
         <div>

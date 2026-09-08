@@ -12,7 +12,9 @@ const OpenPlatine = {
   START: timeToMin('19:30'),
   END: timeToMin('02:00'),
 
-  view: 'cal',          // cal | form | ok | login | admin
+  view: 'cal',          // cal | form | ok | admin (piloté par router.js)
+  lastRef: null,        // uuid de la dernière demande, pour la référence affichée
+  occ: {},              // dateKey -> [{debut,duree,status}] (vue op_occupancy)
   months: [],
   selMonth: 0,
   selDate: null,
@@ -23,12 +25,46 @@ const OpenPlatine = {
 
   // --- data ---
   slotsOf(dateKey){ return Object.values(this.cache[dateKey]?.slots || {}); },
-  blockedOf(dateKey){ return this.slotsOf(dateKey).filter(s => s.status !== 'refused'); },
+
+  // Plages OCCUPÉES d'une date, en fusionnant deux sources :
+  //   1. this.cache : les lignes que la RLS laisse voir (validées, ou tout
+  //      si l'admin est connecté). Elles portent le nom du DJ.
+  //   2. this.occ   : la vue publique op_occupancy, qui expose AUSSI les
+  //      créneaux 'pending' — invisibles autrement pour un visiteur.
+  //
+  // Sans (2), un créneau en attente n'apparaissait pas dans la timeline :
+  // le DJ voyait la plage libre, remplissait le formulaire, et se faisait
+  // refuser à l'envoi (« chevauchement »). Même bug UX que Radio Campus.
+  //
+  // La déduplication se fait sur (debut, duree) : une ligne visible dans le
+  // cache est forcément présente dans l'occupation, il ne faut pas la
+  // compter deux fois (elle s'afficherait en double sur la timeline).
+  blockedOf(dateKey){
+    const fromCache = this.slotsOf(dateKey).filter(s => s.status !== 'refused');
+    const seen = new Set(fromCache.map(s => s.debut + '|' + s.duree));
+    const extra = (this.occ[dateKey] || [])
+      .filter(o => !seen.has(o.debut + '|' + o.duree))
+      // pas de nom : ces créneaux ne sont pas lisibles publiquement
+      .map(o => ({ debut: o.debut, duree: o.duree, status: o.status, nom: '', anonyme: true }));
+    return fromCache.concat(extra);
+  },
+
+  // Vrai si la date porte au moins un créneau en attente non visible
+  // publiquement : sert à afficher l'avertissement avant la saisie.
+  hasPendingOn(dateKey){
+    return (this.occ[dateKey] || []).some(o => o.status === 'pending');
+  },
 
   async loadDate(d){
     const dateKey = dk(d);
     this.cache[dateKey] = await OpStore.getDate(dateKey);
     return this.cache[dateKey];
+  },
+
+  // Vrai si au moins un champ du formulaire a été saisi.
+  hasInput(){
+    const f = this.form || {};
+    return Object.keys(this.emptyForm()).some(k => String(f[k] || '').trim() !== '');
   },
 
   hasConflict(dateKey, debut, duree){
@@ -85,7 +121,6 @@ const OpenPlatine = {
     if (this.view === 'cal') return this.renderCal(app);
     if (this.view === 'form') return this.renderForm(app);
     if (this.view === 'ok') return this.renderOk(app);
-    if (this.view === 'login') return this.renderLogin(app);
     if (this.view === 'admin') return this.renderAdmin(app);
   },
 
@@ -97,10 +132,10 @@ const OpenPlatine = {
         <p class="lead">Réserve ton créneau, branche ta clé, joue ton set. Premier arrivé, premier servi. Validation par l'équipe.</p>
       </section>
       <div class="section-head"><h2 class="section-title">Choisis ta date</h2>
-        <div class="section-meta"><button class="btn-mini" onclick="OpenPlatine.toLogin()">Espace admin</button></div></div>
+        <div class="section-meta"></div></div>
       <div class="month-selector" id="opMonths"></div>
       <div class="legend">
-        <div class="item"><span class="sw" style="background:var(--pending)"></span>En attente</div>
+        <div class="item"><span class="sw" style="background:var(--pending)"></span>En attente / demandé</div>
         <div class="item"><span class="sw" style="background:var(--ok)"></span>Validé</div>
         <div class="item"><span class="sw" style="background:var(--bg-3);border:1px solid var(--muted)"></span>Libre</div>
       </div>
@@ -127,6 +162,9 @@ const OpenPlatine = {
   async renderList(){
     const weds = this.months[this.selMonth].weds;
     // Liste les clés existantes (évite un get sur chaque mercredi libre)
+    // Occupation publique d'abord : elle seule contient les créneaux en
+    // attente, que la RLS cache au visiteur (cf. blockedOf).
+    this.occ = await OpStore.occupancy();
     const existing = new Set(await OpStore.listDateKeys());
     await Promise.all(weds.map(w => {
       const k = dk(w);
@@ -156,8 +194,8 @@ const OpenPlatine = {
         ${blocked.length ? `<div class="op-slot-list">${blocked.map(s => `
           <div class="op-slot-line">
             <span class="t" style="color:${s.status === 'validated' ? 'var(--ok)' : 'var(--pending)'}">${escapeHtml(s.debut)} · ${escapeHtml(s.duree)}</span>
-            <span class="n">${escapeHtml(s.nom)}</span>
-            <span class="s">${escapeHtml(s.styles || '')}</span>
+            <span class="n">${escapeHtml(s.anonyme ? 'Réservé' : s.nom)}</span>
+            <span class="s">${escapeHtml(s.anonyme ? 'demande en cours' : (s.styles || ''))}</span>
           </div>`).join('')}</div>`
           : (past ? '' : `<div class="section-meta" style="margin-top:10px">Soirée libre — sois le premier</div>`)}
       </div>`;
@@ -170,7 +208,10 @@ const OpenPlatine = {
       const left = ((start - this.START) / total) * 100;
       const width = (dur / total) * 100;
       const color = s.status === 'refused' ? 'var(--refused)' : s.status === 'validated' ? 'var(--ok)' : 'var(--pending)';
-      return `<div class="slot-block" style="left:${left}%;width:${width}%;background:${color}"><span>${escapeHtml(s.nom)}</span></div>`;
+      // Créneau connu par l'occupation publique seulement : on montre qu'il
+      // est pris, sans nom (la RLS ne nous laisse pas le lire).
+      const label = s.anonyme ? 'Réservé' : s.nom;
+      return `<div class="slot-block" style="left:${left}%;width:${width}%;background:${color}"><span>${escapeHtml(label)}</span></div>`;
     }).join('');
     const marks = ['20:00','22:00','00:00','02:00'].map(h => {
       const left = ((timeToMin(h) - this.START) / total) * 100;
@@ -182,7 +223,10 @@ const OpenPlatine = {
   async openForm(dateKey){
     this.selDate = parseDk(dateKey);
     await this.loadDate(this.selDate);     // relecture fraîche avant d'ouvrir
-    this.form = this.emptyForm();
+    this.occ = await OpStore.occupancy();  // + créneaux en attente (invisibles via RLS)
+    // On ne vide le formulaire que s'il est vierge : après un conflit à
+    // l'envoi, la saisie de l'utilisateur est conservée.
+    if (!this.hasInput()) this.form = this.emptyForm();
     this.view = 'form';
     this.render(document.getElementById('app'));
   },
@@ -203,7 +247,12 @@ const OpenPlatine = {
       <div class="eyebrow">Inscription Open Platine</div>
       <h2 class="section-title" style="font-size:26px;margin-bottom:4px">Mercredi ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}</h2>
       <div class="section-meta" style="color:var(--accent);margin-bottom:20px">CITIZEN BAR · 19H30 – 02H00</div>
-      <div class="field"><label>Créneaux déjà pris</label>${this.timelineHtml(this.slotsOf(dateKey))}</div>
+      ${this.hasPendingOn(dateKey) ? `<div class="warn-banner">
+        <strong>Une ou plusieurs demandes sont déjà en attente sur cette soirée.</strong>
+        Les plages concernées apparaissent ci-dessous. Tu peux réserver un créneau libre :
+        si tu chevauches une demande en cours, la tienne pourra être refusée.
+      </div>` : ''}
+      <div class="field"><label>Créneaux déjà pris</label>${this.timelineHtml(this.blockedOf(dateKey))}</div>
       <div class="grid-2">
         <div class="field"><label>Heure de début *</label>
           <select id="op_debut">${['<option value="">Choisir…</option>'].concat(this.HORAIRES.map(h => `<option ${f.debut === h ? 'selected' : ''}>${h}</option>`)).join('')}</select></div>
@@ -245,12 +294,17 @@ const OpenPlatine = {
     this._submitting = false;
     if (!res.ok){
       if (btn){ btn.disabled = false; btn.textContent = 'Envoyer mon inscription'; }
+      // Occupation rafraîchie : la plage qui vient d'être prise doit
+      // apparaître dans la timeline du formulaire au prochain rendu.
+      if (res.reason === 'overlap') this.occ = await OpStore.occupancy();
       err.innerHTML =
-        res.reason === 'overlap' ? '<div class="error">Trop tard, ce créneau vient d\'être pris. Choisis un autre horaire.</div>'
+        res.reason === 'overlap' ? '<div class="error">Ce créneau vient d\'être pris. Ta saisie est conservée : choisis un autre horaire ci-dessus.</div>'
         : res.reason === 'config' ? '<div class="error">Backend non configuré (Supabase). Vérifie supabaseUrl et supabaseAnonKey dans config.js.</div>'
         : `<div class="error">Échec de l'enregistrement.<br>Détail : ${escapeHtml(LAST_STORAGE_ERROR || 'inconnu')}</div>`;
       return;
     }
+    this.lastRef = res.id;   // reference a afficher sur l'ecran de confirmation
+    this.form = this.emptyForm();   // succès : on repart d'un formulaire vierge
     this.view = 'ok';
     this.render(document.getElementById('app'));
   },
@@ -261,6 +315,7 @@ const OpenPlatine = {
         <div class="eyebrow" style="justify-content:center">Inscription reçue</div>
         <h2>En attente de validation</h2>
         <p>Ton créneau est réservé. L'équipe du Citizen Bar revient vers toi pour confirmer.</p>
+        ${refBlockHtml('op', this.lastRef)}
         <button class="btn" style="max-width:280px;margin:0 auto" onclick="OpenPlatine.back()">Retour aux mercredis</button>
       </div>`;
   },
@@ -268,13 +323,8 @@ const OpenPlatine = {
   back(){ this.view = 'cal'; this.render(document.getElementById('app')); },
 
   // --- admin ---
-  toLogin(){
-    if (Auth.isAdmin()){ this.view = 'admin'; } else { this.view = 'login'; }
-    this.render(document.getElementById('app'));
-  },
-  renderLogin(app){ Admin.renderLogin(app, 'OpenPlatine'); },
-  async login(){ return Admin.login('OpenPlatine'); },
-
+  // La vue est pilotée par syncModuleViews() dans router.js : ce module n'a
+  // plus d'écran de connexion propre (mode admin global).
   async renderAdmin(app){
     app.innerHTML = `
       <div class="eyebrow">Administration</div>
@@ -282,8 +332,6 @@ const OpenPlatine = {
       <div class="section-head"><h2 class="section-title">Inscriptions</h2>
         <div class="section-meta">
           <button class="btn-mini" onclick="OpenPlatine.loadAdmin()">↻ Rafraîchir</button>
-          <button class="btn-mini" onclick="OpenPlatine.back()">Vue publique</button>
-          <button class="btn-mini" onclick="Admin.signOut('OpenPlatine')">Déconnexion</button>
         </div></div>
       <div id="op_admin"><div class="portal-empty">Chargement…</div></div>`;
     this.loadAdmin();
@@ -338,7 +386,7 @@ const OpenPlatine = {
 
   bookingCard(dateKey, id, s, isPastCard){
     const bc = s.status === 'validated' ? 'var(--ok)' : s.status === 'refused' ? 'var(--refused)' : 'var(--pending)';
-    const meta = [['email',s.email],['tél',s.tel],['instagram',s.instagram],['styles',s.styles], s.remarques && ['remarques',s.remarques]].filter(Boolean);
+    const meta = [['réf',refFromId('op', s.id)],['email',s.email],['tél',s.tel],['instagram',s.instagram],['styles',s.styles], s.remarques && ['remarques',s.remarques]].filter(Boolean);
     return `<div class="booking-card" style="--bc:${bc}">
       <div class="bc-head">
         <div><div class="bc-name">${escapeHtml(s.nom)}</div><div class="bc-sub">${escapeHtml(s.debut)} · ${escapeHtml(s.duree)}</div></div>

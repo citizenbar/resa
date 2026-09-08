@@ -57,12 +57,35 @@ const OpStore = {
     return [...new Set((data || []).map(r => r.event_date))];
   },
 
+  // OCCUPATION PUBLIQUE : plages déjà prises (pending incluses), pour que
+  // la timeline et l'anti-chevauchement soient justes AVANT la saisie.
+  // Sans ça, les créneaux en attente sont invisibles (RLS) et l'utilisateur
+  // remplit un formulaire pour se faire refuser à l'envoi.
+  // -> dateKey -> [ { debut, duree, status } ] (aucune donnée personnelle)
+  async occupancy(){
+    if (!storageReady()) return {};
+    const { data, error } = await window.sb
+      .from('op_occupancy').select('event_date,debut_min,duree_min,occupancy');
+    if (error) { fail(error); return {}; }
+    const map = {};
+    for (const r of (data || [])) {
+      (map[r.event_date] = map[r.event_date] || []).push({
+        debut: minToTime(r.debut_min),
+        duree: MIN_TO_DUREE[r.duree_min] || (r.duree_min / 60) + 'h',
+        status: r.occupancy,
+      });
+    }
+    return map;
+  },
+
   // Réservation invité atomique (anti-chevauchement côté serveur via RPC).
   // f = { nom,email,tel,instagram,styles,debut("HH:MM"),duree("2h"),remarques }
   // Retour : { ok:true } | { ok:false, reason:'overlap'|'error' }
   async request(dateKey, f){
     if (!storageReady()) return { ok:false, reason:'config' };
-    const { error } = await window.sb.rpc('op_request', {
+    // La RPC renvoie l'uuid cree : on le remonte pour en deriver la
+    // reference courte affichee au demandeur (cf. refFromId dans helpers).
+    const { data, error } = await window.sb.rpc('op_request', {
       p_date: dateKey,
       p_debut_min: timeToMin(f.debut),
       p_duree_min: DUREE_TO_MIN[f.duree] || 60,
@@ -74,7 +97,7 @@ const OpStore = {
       if ((error.message || '').includes('overlap')) return { ok:false, reason:'overlap' };
       return { ok:false, reason:'error' };
     }
-    return { ok:true };
+    return { ok:true, id: Array.isArray(data) ? data[0] : data };
   },
 
   // Admin : changer le statut d'une réservation.
@@ -121,11 +144,25 @@ const RcStore = {
     return [...new Set((data || []).map(r => r.event_date))];
   },
 
+  // OCCUPATION PUBLIQUE : dateKey -> 'pending' | 'validated'.
+  // Indispensable côté calendrier : les policies RLS ne laissent voir à un
+  // visiteur que les lignes 'validated', donc une demande en attente est
+  // invisible et la date paraît libre. La vue rc_occupancy expose l'état
+  // d'occupation SANS aucune donnée personnelle (cf. public-occupancy.sql).
+  async occupancy(){
+    if (!storageReady()) return {};
+    const { data, error } = await window.sb.from('rc_occupancy').select('event_date,occupancy');
+    if (error) { fail(error); return {}; }
+    const map = {};
+    for (const r of (data || [])) map[r.event_date] = r.occupancy;
+    return map;
+  },
+
   // Réservation invité atomique (1/jour garanti côté serveur).
   // f = { emission,animateur,email,tel,style,micros,materiel,remarques }
   async request(dateKey, f){
     if (!storageReady()) return { ok:false, reason:'config' };
-    const { error } = await window.sb.rpc('rc_request', {
+    const { data, error } = await window.sb.rpc('rc_request', {
       p_date: dateKey, p_emission: f.emission, p_animateur: f.animateur, p_style: f.style,
       p_micros: f.micros, p_materiel: f.materiel || '',
       p_email: f.email, p_tel: f.tel, p_remarques: f.remarques || '',
@@ -135,7 +172,7 @@ const RcStore = {
       if ((error.message || '').includes('taken')) return { ok:false, reason:'taken' };
       return { ok:false, reason:'error' };
     }
-    return { ok:true };
+    return { ok:true, id: Array.isArray(data) ? data[0] : data };
   },
 
   async setStatus(id, status){
@@ -296,7 +333,7 @@ const EvStore = {
   // DJ : remplir la fiche (scelle le code). f = fiche complète. -> { ok, reason }
   async fillSlot(code, f){
     if (!storageReady()) return { ok:false, reason:'config' };
-    const { error } = await window.sb.rpc('ev_fill_slot', {
+    const { data, error } = await window.sb.rpc('ev_fill_slot', {
       p_code: code, p_dj_nom: f.nom, p_debut: f.debut, p_fin: f.fin,
       p_styles: f.styles, p_format: f.format || '',
       p_email: f.email, p_tel: f.tel, p_instagram: f.instagram || '',
@@ -307,7 +344,7 @@ const EvStore = {
       if ((error.message || '').includes('code_used')) return { ok:false, reason:'used' };
       return { ok:false, reason:'error' };
     }
-    return { ok:true };
+    return { ok:true, id: Array.isArray(data) ? data[0] : data };
   },
 
   async setStatus(id, status){

@@ -185,6 +185,59 @@ header.top {
 }
 .btn-ghost:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); filter: none; }
 
+/* Connexion Google : bouton neutre (les couleurs de l'accent module ne
+   s'appliquent pas à une marque tierce). */
+.btn-google {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--muted);
+  width: 100%;
+}
+.btn-google:hover:not(:disabled) { border-color: var(--fg); filter: none; }
+
+/* Entrée admin du header : discrète (un simple ⚡) hors connexion, mise en
+   évidence une fois le mode admin actif. */
+.tab-admin { opacity: 0.35; letter-spacing: 0; }
+.tab-admin:hover { opacity: 1; }
+.tab-admin.active {
+  opacity: 1;
+  background: var(--fg);
+  color: var(--bg);
+  border-color: var(--fg);
+}
+
+/* Bandeau permanent du mode admin : sur un poste partagé (le bar), il faut
+   voir en permanence QUI est connecté et pouvoir sortir en un clic. */
+.admin-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  background: var(--fg);
+  color: var(--bg);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+.admin-bar-tag { font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.admin-bar-mail { opacity: 0.75; margin-right: auto; }
+.admin-bar .btn-mini {
+  background: transparent;
+  color: var(--bg);
+  border: 1px solid color-mix(in srgb, var(--bg) 45%, transparent);
+}
+.admin-bar .btn-mini:hover { background: var(--bg); color: var(--fg); }
+
+/* Séparateur "ou" entre les deux modes de connexion. */
+.admin-sep {
+  margin: 14px 0 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
 .btn-mini {
   background: transparent;
   border: 1px solid var(--muted);

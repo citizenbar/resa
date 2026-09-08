@@ -1,58 +1,106 @@
 // =====================================================================
-// ADMIN — login / logout partagés (Supabase Auth)
+// ADMIN : mode admin global (« god mode »)
 // =====================================================================
-// Les trois modules (OpenPlatine / RadioCampus / Events) partagent le même
-// écran de connexion et la même session. Une fois connecté, l'admin a accès
-// aux dashboards des trois modules (Auth.isAdmin()).
+// Un seul point d'entrée pour toute l'application : le bouton ⚡ du header.
+// Une fois connecté, les onglets Open Platine / Radio Campus / Events
+// affichent leur dashboard au lieu de leur vue publique (arbitrage dans
+// router.js via syncModuleViews), et un bandeau rappelle qui est connecté.
 //
-// Chaque module délègue ici :
-//   - renderLogin(app, moduleName) : affiche le formulaire email/mot de passe
-//   - login(moduleName)            : tente la connexion, route vers 'admin'
-//   - signOut(moduleName)          : déconnexion, retour vue publique
+// Connexion : Google uniquement. Le formulaire email/mot de passe a été
+// retiré pour n'avoir qu'un seul parcours à maintenir.
 //
-// moduleName = 'OpenPlatine' | 'RadioCampus' | 'Events' (clé window.<module>).
+// IMPORTANT : tout ce fichier ne fait qu'AFFICHER. L'autorisation réelle
+// est appliquée côté serveur par les policies Postgres via is_admin()
+// (supabase/restrict-admin-emails.sql), qui n'autorise que les emails de
+// la table admin_emails. Un utilisateur qui contournerait cette UI
+// n'obtiendrait aucune donnée.
 // =====================================================================
 
 const Admin = {
-  renderLogin(app, moduleName){
+  // =====================================================================
+  // MODE ADMIN GLOBAL (« god mode »)
+  // =====================================================================
+  // Avant : chaque module portait son propre écran de login et son propre
+  // état (view: 'login' | 'admin'), donc trois portes d'entrée et un mode
+  // admin perdu à chaque changement d'onglet — alors que la SESSION, elle,
+  // est globale et commune aux trois modules.
+  //
+  // Maintenant : un seul interrupteur. Une fois connecté, les onglets
+  // existants (Open Platine / Radio Campus / Events) affichent leur
+  // dashboard au lieu de leur vue publique. C'est router.js qui arbitre,
+  // via Auth.isAdmin(). Les modules n'ont plus à gérer 'login'.
+
+  // Bouton du header : ⚡ discret pour se connecter, actif une fois admin.
+  renderHeaderButton(){
+    const b = document.getElementById('adminEntry');
+    if (!b) return;
+    const on = Auth.isAdmin();
+    b.classList.toggle('active', on);
+    b.textContent = on ? '⚡ ADMIN' : '⚡';
+    b.title = on ? 'Mode admin actif' : 'Espace admin';
+  },
+
+  // Bandeau permanent en mode admin : rappelle QUI est connecté (poste
+  // partagé au bar) et donne la déconnexion à portée de clic.
+  renderBanner(){
+    const bar = document.getElementById('adminBar');
+    if (!bar) return;
+    if (!Auth.isAdmin()) { bar.innerHTML = ''; return; }
+    const mail = (Auth.session && Auth.session.user && Auth.session.user.email) || '';
+    bar.innerHTML = `
+      <div class="admin-bar">
+        <span class="admin-bar-tag">⚡ Mode admin</span>
+        <span class="admin-bar-mail">${escapeHtml(mail)}</span>
+        <button class="btn-mini" onclick="Admin.signOutGlobal()">Déconnexion</button>
+      </div>`;
+  },
+
+  // Clic sur le ⚡ du header : connecté -> retour à l'agenda ; sinon login.
+  // On passe par go() plutôt que d'écrire dans `state` depuis ce fichier :
+  // l'état de navigation appartient à router.js.
+  headerClick(){
+    go(Auth.isAdmin() ? 'portal' : 'login');
+  },
+
+  // Déconnexion globale : on quitte le mode admin et on revient au public.
+  async signOutGlobal(){
+    await Auth.signOut();
+    go('portal');
+  },
+
+  // Écran de connexion global. Google est le SEUL chemin : le formulaire
+  // email/mot de passe a été retiré volontairement (un seul parcours à
+  // maintenir, et le compte admin n'a pas de mot de passe à gérer).
+  // NB : les comptes restent créés dans Supabase ; c'est la liste blanche
+  // admin_emails qui autorise, pas le fournisseur.
+  renderGlobalLogin(app){
     app.innerHTML = `
       <div class="admin-login">
         <div class="eyebrow" style="justify-content:center">Accès réservé</div>
-        <h2 class="section-title" style="font-size:24px;margin-bottom:18px">Dashboard admin</h2>
-        <div class="field"><input type="email" id="admin_email" placeholder="Email admin" autocomplete="username"
-          onkeydown="if(event.key==='Enter')document.getElementById('admin_pwd').focus()"></div>
-        <div class="field"><input type="password" id="admin_pwd" placeholder="Mot de passe" autocomplete="current-password"
-          onkeydown="if(event.key==='Enter')${moduleName}.login()"></div>
+        <h2 class="section-title" style="font-size:24px;margin-bottom:18px">Espace admin</h2>
         <div id="admin_login_err"></div>
-        <button class="btn" onclick="${moduleName}.login()">Entrer</button>
-        <button class="btn-mini" style="margin-top:10px;border:none;color:var(--fg-dim)" onclick="${moduleName}.back()">← Retour</button>
+        <button class="btn btn-google" onclick="Admin.loginGoogle()">Continuer avec Google</button>
+        <button class="btn-mini" style="margin-top:10px;border:none;color:var(--fg-dim)" onclick="go('portal')">← Retour au site</button>
       </div>`;
-    setTimeout(() => document.getElementById('admin_email')?.focus(), 40);
+    // Retour de redirection Google avec un compte hors liste blanche : la
+    // session existe mais n'ouvre aucun droit. On le dit, puis on la ferme.
+    if (Auth.session && !Auth.isAdminUser) {
+      const err = document.getElementById('admin_login_err');
+      const mail = Auth.session.user && Auth.session.user.email;
+      if (err) err.innerHTML = `<div class="error">${escapeHtml(Auth._notAllowedMsg(mail))}</div>`;
+      Auth.signOut();
+    }
   },
 
-  async login(moduleName){
-    const mod = window[moduleName];
-    const email = (document.getElementById('admin_email')?.value || '').trim();
-    const password = (document.getElementById('admin_pwd')?.value || '').trim();
+  // Connexion Google. Redirige vers Google ; le retour est traité par
+  // onAuthStateChange (detectSessionInUrl actif), qui rafraîchit le drapeau
+  // admin puis re-render.
+  async loginGoogle(){
     const err = document.getElementById('admin_login_err');
-    if (!email || !password){
-      if (err) err.innerHTML = '<div class="error">Renseigne ton email et ton mot de passe.</div>';
-      return;
+    const res = await Auth.signInWithGoogle();
+    if (!res.ok && err) {
+      err.innerHTML = `<div class="error">${escapeHtml(res.error || 'Connexion Google impossible.')}</div>`;
     }
-    const res = await Auth.signIn(email, password);
-    if (!res.ok){
-      if (err) err.innerHTML = `<div class="error">${escapeHtml(res.error || 'Connexion impossible.')}</div>`;
-      return;
-    }
-    mod.view = 'admin';
-    mod.render(document.getElementById('app'));
-  },
-
-  async signOut(moduleName){
-    const mod = window[moduleName];
-    await Auth.signOut();
-    mod.view = 'cal';
-    mod.render(document.getElementById('app'));
   },
 };
 
