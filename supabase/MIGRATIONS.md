@@ -27,6 +27,7 @@ Sur une base neuve, exécuter dans cet ordre exact :
 | 8 | `rc-rules-2026-09.sql` | Radio Campus : grants `anon` resserrés (l'animateur ne sort plus du flux), `rc_request` réécrite avec `p_photo`, délai de 14 jours appliqué côté serveur | oui |
 | 9 | `op-photo-2026-09.sql` | Open Platine : colonne `op_slots.photo`, exposée dans `public_events`, `op_request` réécrite avec `p_photo` | oui |
 | 10 | `admin-edit-2026-09.sql` | Édition d'une fiche par l'admin : RPC `ev_admin_update`, `op_admin_update`, `rc_admin_update` | oui |
+| 11 | `upload-quota-2026-09.sql` | Quota d'upload par IP (`upload_quota_take`) pour les modules sans code ; `purge_orphan_artist_photos` étendue aux photos RC et OP | oui |
 
 **#8, #9 et #10 corrigent une migration laissée à mi-chemin.**
 `migrate-public-events.sql` (#5) a déplacé les colonnes promo de `*_contacts`
