@@ -1,14 +1,20 @@
 // =====================================================================
-// VERCEL FUNCTION — signe un upload de photo d'artiste (module Events)
+// VERCEL FUNCTION — signe un upload de photo d'artiste (3 modules)
 // =====================================================================
-// Rôle : permettre au DJ (anonyme, il a juste un CODE Events) d'uploader sa
-// photo dans Supabase Storage SANS exposer de secret au navigateur.
+// Rôle : permettre à un intervenant anonyme d'uploader sa photo dans Supabase
+// Storage SANS exposer de secret au navigateur.
+//
+// Deux régimes d'autorisation, selon le module appelant :
+//   - Events            : un CODE DJ à 6 chiffres, qui vaut autorisation et
+//                         porte son propre compteur (5 uploads max par code).
+//   - Radio Campus / OP : aucun code (formulaire ouvert à tous), donc quota
+//                         par IP (10 par heure, cf. upload-quota-2026-09.sql).
 //
 // Flux (signed upload URL, approche recommandée par Supabase) :
-//   1. Le navigateur POST { code, ext } ici.
-//   2. La fonction VÉRIFIE le code Events (valide + pas encore utilisé) via la
-//      RPC publique ev_claim_code (ne consomme pas le code, le scellage se fait
-//      plus tard par ev_fill_slot). Pas de code valide -> 403, aucune signature.
+//   1. Le navigateur POST { code, ext } ici — `code` absent pour RC et OP.
+//   2. La fonction AUTORISE : avec code, ev_can_upload le valide et décompte un
+//      crédit ; sans code, upload_quota_take décompte un crédit d'IP. Refus ->
+//      403 (code) ou 429 (quota), et aucune signature n'est émise.
 //   3. La fonction génère un nom de fichier UUID (non devinable, non
 //      énumérable) et demande à Supabase Storage une signed upload URL, avec la
 //      clé SECRÈTE (sb_secret_, uniquement en variable d'env Vercel, JAMAIS
@@ -18,7 +24,7 @@
 //
 // Sécurité : anon n'a aucune policy d'écriture sur le bucket (cf.
 // supabase/storage-artist-photos.sql). Le seul moyen d'uploader est de passer
-// par cette fonction, qui exige un code Events valide. La clé secrète ne quitte
+// par cette fonction, qui exige un code Events valide ou un crédit de quota. La clé secrète ne quitte
 // jamais le serveur. Le fichier ne transite pas par la fonction (pas de limite
 // de body), seul un petit JSON circule.
 // =====================================================================
@@ -79,6 +85,46 @@ async function reserveUploadSlot(code) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Consomme un crédit de quota pour cette IP (RPC upload_quota_take).
+// Utilisé par les modules SANS code (Radio Campus, Open Platine), dont le
+// formulaire est ouvert à tout visiteur : l'IP est le seul identifiant stable
+// dont on dispose pour brider une boucle automatisée. Le décompte se fait
+// côté Postgres, dans la même transaction, donc sans course entre requêtes.
+// L'adresse n'est jamais stockée en clair (empreinte salée par le jour).
+async function takeIpQuota(ip) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upload_quota_take`, {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_PUBLISHABLE_KEY,
+        Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ p_ip: ip }),
+      signal: controller.signal,
+    });
+    if (!res.ok) return false;
+    return (await res.json()) === true;
+  } catch (_) {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// IP du client. Sur Vercel, x-forwarded-for est renseigné par la plateforme et
+// sa PREMIÈRE valeur est l'adresse d'origine (les suivantes sont les proxys
+// traversés). On ne lit pas un en-tête que le client pourrait choisir seul.
+function clientIp(req) {
+  const xff = req.headers['x-forwarded-for'];
+  if (typeof xff === 'string' && xff.length) return xff.split(',')[0].trim();
+  if (Array.isArray(xff) && xff.length) return String(xff[0]).split(',')[0].trim();
+  return String(req.headers['x-real-ip'] || '').trim();
 }
 
 // Demande une signed upload URL à Supabase Storage (clé secrète).
@@ -172,13 +218,6 @@ module.exports = async function handler(req, res) {
     const code = String(body.code || '').trim();
     const ext = String(body.ext || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
-    // Validation des entrées.
-    if (!/^\d{6}$/.test(code)) {
-      res.statusCode = 400;
-      res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      res.end(JSON.stringify({ error: 'code invalide' }));
-      return;
-    }
     if (!ALLOWED_EXT.has(ext)) {
       res.statusCode = 400;
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -186,14 +225,40 @@ module.exports = async function handler(req, res) {
       return;
     }
 
-    // Vérifier le code Events AVANT de signer quoi que ce soit.
-    // Réserve un crédit d'upload (atomique). Refuse si code invalide/scellé OU
-    // limite d'uploads atteinte pour ce code (anti-abus C1).
-    if (!(await reserveUploadSlot(code))) {
-      res.statusCode = 403;
-      res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      res.end(JSON.stringify({ error: 'code Events invalide, déjà utilisé, ou trop d\'envois' }));
-      return;
+    // DEUX RÉGIMES D'AUTORISATION, selon que le module a un code ou non.
+    //
+    //   Events        -> un code DJ à 6 chiffres. Le code EST l'autorisation :
+    //                    ev_can_upload le valide et décompte un crédit (5 max).
+    //   RC / OP       -> aucun code, formulaire ouvert à tout visiteur. On
+    //                    retombe sur un quota par IP (upload_quota_take).
+    //
+    // Un code DJ MAL FORMÉ est refusé (400) plutôt que traité comme une absence
+    // de code. Sinon un DJ ayant épuisé les 5 uploads de son code n'aurait qu'à
+    // envoyer n'importe quoi à la place pour passer dans la branche « visiteur »
+    // et repartir sur le quota d'IP, qui se recharge toutes les heures.
+    // Autrement dit : la branche est choisie par la PRÉSENCE du champ, mais son
+    // contenu doit être valide pour cette branche.
+    if (code) {
+      if (!/^\d{6}$/.test(code)) {
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ error: 'code invalide' }));
+        return;
+      }
+      if (!(await reserveUploadSlot(code))) {
+        res.statusCode = 403;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ error: 'code Events invalide, déjà utilisé, ou trop d\'envois' }));
+        return;
+      }
+    } else {
+      const ip = clientIp(req);
+      if (!(await takeIpQuota(ip))) {
+        res.statusCode = 429;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ error: 'trop d\'envois depuis cette connexion, réessaie dans une heure' }));
+        return;
+      }
     }
 
     // Nom de fichier UUID (non devinable, non énumérable).
