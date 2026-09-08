@@ -242,6 +242,39 @@ header.top {
 }
 .warn-banner strong { display: block; margin-bottom: 4px; }
 
+/* Référence de réservation, sur l'écran de confirmation. Le code doit être
+   lisible et dictable au téléphone : monospace, large, bien détaché. */
+.resa-ref {
+  margin: 26px auto 22px;
+  max-width: 340px;
+  padding: 18px 20px;
+  border: 1px solid var(--muted);
+  background: var(--bg);
+}
+.resa-ref-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  margin-bottom: 10px;
+}
+.resa-ref-row { display: flex; align-items: center; justify-content: center; gap: 12px; }
+.resa-ref-code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  user-select: all;              /* un clic sélectionne tout le code */
+}
+.resa-ref-hint {
+  margin-top: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg-dim);
+}
+
 /* Séparateur "ou" entre les deux modes de connexion. */
 .admin-sep {
   margin: 14px 0 10px;

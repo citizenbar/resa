@@ -35,3 +35,61 @@ function escapeHtml(s){
 
 // id court unique (création de slot / réservation)
 function genId(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+
+// =====================================================================
+// RÉFÉRENCE DE RÉSERVATION (à citer par le demandeur)
+// =====================================================================
+// Dérive une référence courte et lisible de l'uuid renvoyé par la RPC :
+//   "1f7a80a9-3a79-..." + module 'rc'  ->  "RC-1F7A"
+//
+// Ce n'est PAS un secret et ça n'ouvre aucun accès : c'est un identifiant
+// à citer ("bonjour, ma réservation RC-1F7A"). L'admin la retrouve en
+// comparant le début de l'uuid dans son dashboard. On garde 4 caractères :
+// assez pour lever l'ambiguïté sur le volume d'un bar, assez court pour
+// être dicté au téléphone.
+const MODULE_REF_PREFIX = { op: 'OP', rc: 'RC', ev: 'EV' };
+
+function refFromId(module, id){
+  if (!id) return '';
+  const clean = String(id).replace(/-/g, '').toUpperCase();
+  return (MODULE_REF_PREFIX[module] || 'CB') + '-' + clean.slice(0, 4);
+}
+
+// Bloc HTML affiché sur l'écran de confirmation. Vide si l'id manque
+// (backend indisponible) : mieux vaut pas de référence qu'une fausse.
+function refBlockHtml(module, id){
+  const ref = refFromId(module, id);
+  if (!ref) return '';
+  return `
+    <div class="resa-ref">
+      <div class="resa-ref-label">Ta référence</div>
+      <div class="resa-ref-row">
+        <code class="resa-ref-code" id="resaRef">${escapeHtml(ref)}</code>
+        <button class="btn-mini" onclick="copyRef()">Copier</button>
+      </div>
+      <div class="resa-ref-hint">Garde-la : elle nous permet de retrouver ta demande si tu nous contactes.</div>
+    </div>`;
+}
+
+// Copie la référence dans le presse-papier, avec repli si l'API n'est pas
+// disponible (http non sécurisé, navigateur ancien) : on sélectionne le
+// texte pour que l'utilisateur puisse copier à la main.
+function copyRef(){
+  const el = document.getElementById('resaRef');
+  if (!el) return;
+  const txt = el.textContent.trim();
+  const done = (btn) => { if (btn) { const o = btn.textContent; btn.textContent = 'Copié'; setTimeout(() => btn.textContent = o, 1600); } };
+  const btn = el.parentElement && el.parentElement.querySelector('button');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(txt).then(() => done(btn)).catch(() => selectText(el));
+  } else {
+    selectText(el);
+  }
+}
+
+function selectText(el){
+  try {
+    const r = document.createRange(); r.selectNodeContents(el);
+    const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+  } catch (_) {}
+}
