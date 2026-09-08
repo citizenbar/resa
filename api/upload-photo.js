@@ -95,6 +95,15 @@ async function signUpload(path) {
           Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
           'Content-Type': 'application/json',
         },
+        // Body OBLIGATOIRE. Storage est servi par Fastify, qui refuse toute
+        // requête annonçant 'application/json' avec un corps vide :
+        //   400 "Body cannot be empty when content-type is set to
+        //        'application/json'"
+        // Cet endpoint n'attend aucun paramètre, d'où le '{}'. Sans lui la
+        // signature échoue systématiquement et la fonction renvoie 502
+        // "signature indisponible" : un symptôme qui ressemble à tort à une
+        // clé secrète invalide (une vraie mauvaise clé renverrait 403).
+        body: '{}',
         signal: controller.signal,
       }
     );
