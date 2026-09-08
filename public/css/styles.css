@@ -228,6 +228,20 @@ header.top {
 }
 .admin-bar .btn-mini:hover { background: var(--bg); color: var(--fg); }
 
+/* Avertissement en en-tête de formulaire : prévient AVANT la saisie qu'une
+   autre demande est en cours sur la date. Informatif, pas bloquant. */
+.warn-banner {
+  margin: 0 0 20px;
+  padding: 14px 16px;
+  background: color-mix(in srgb, var(--pending) 12%, var(--bg-2));
+  border-left: 3px solid var(--pending);
+  font-family: 'Fraunces', serif;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--fg);
+}
+.warn-banner strong { display: block; margin-bottom: 4px; }
+
 /* Séparateur "ou" entre les deux modes de connexion. */
 .admin-sep {
   margin: 14px 0 10px;
