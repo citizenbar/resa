@@ -21,3 +21,10 @@ node_modules/
 # Vercel
 .vercel
 .env*
+
+# Courrier / pièces jointes reçues (ne jamais committer)
+mail/
+
+# Outillage agent local (settings, worktrees, etat de session)
+.claude/
+.omc/
