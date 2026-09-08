@@ -116,8 +116,8 @@ const Events = {
     return `<div style="min-height:74px;padding:7px 5px;border-top:1px solid var(--muted);border-left:1px solid var(--muted);display:flex;flex-direction:column;align-items:center;gap:3px;${hasEvent && inM && !past ? 'background:color-mix(in srgb,var(--accent) 8%,transparent)' : isToday && inM ? 'background:var(--bg-3)' : ''}">
       <span style="font-family:'Fraunces',serif;font-size:14px;color:${numColor};font-weight:${isToday ? '600' : '400'}">${date.getDate()}</span>
       ${inM && !past && !monday && hasEvent ? `<div style="width:100%;text-align:left">
-        ${named.map(s => `<div style="font-size:8px;font-family:'JetBrains Mono',monospace;color:var(--accent);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(s.soiree)}</div><div style="font-size:7.5px;color:var(--fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.nom !== 'En attente…' ? escapeHtml(s.nom) + ' · ' : ''}${escapeHtml(s.form.styles)}</div>`).join('')}
-        ${pending > 0 ? `<div style="font-size:7px;color:var(--muted)">${pending} slot${pending > 1 ? 's' : ''} à venir</div>` : ''}
+        ${named.map(s => `<div class="cal-label is-strong" style="color:var(--accent)">${escapeHtml(s.soiree)}</div><div class="cal-label" style="color:var(--fg-dim)">${s.nom !== 'En attente…' ? escapeHtml(s.nom) + ' · ' : ''}${escapeHtml(s.form.styles)}</div>`).join('')}
+        ${pending > 0 ? `<div class="cal-label" style="color:var(--muted)">${pending} slot${pending > 1 ? 's' : ''} à venir</div>` : ''}
       </div>` : ''}
     </div>`;
   },
@@ -336,7 +336,12 @@ const Events = {
     // enrichit les fiches remplies de leurs contacts (table privée), en parallèle
     const flat = groups.flatMap(g => g.slots.filter(([,s]) => s.form).map(([id, s]) => ({ id, s })));
     const contacts = await Promise.all(flat.map(x => EvStore.contact(x.id)));
-    flat.forEach((x, i) => { const c = contacts[i] || {}; x.s.form = { ...x.s.form, email:c.email, tel:c.tel, instagram:c.instagram, soundcloud:c.soundcloud, photo:c.photo, remarques:c.remarques }; });
+    // Les contacts ne portent PLUS que email / tel / remarques : les liens promo
+    // (instagram, soundcloud, photo) ont migré vers ev_slots avec
+    // migrate-public-events.sql et sont déjà chargés par getDateAdmin. Les lire
+    // ici depuis ev_contacts renvoyait undefined, et l'admin ne voyait jamais
+    // le lien photo d'une fiche pourtant remplie.
+    flat.forEach((x, i) => { const c = contacts[i] || {}; x.s.form = { ...x.s.form, email:c.email, tel:c.tel, remarques:c.remarques }; });
     const all = groups.flatMap(g => g.slots.map(([,s]) => s));
     const count = st => all.filter(s => s.status === st).length;
     const target = document.getElementById('ev_admin'); if (!target) return;
@@ -385,9 +390,82 @@ const Events = {
         ${filled && s.status !== 'validated' ? `<button class="btn-mini green" onclick="Events.setStatus('${id}','validated')">Valider</button>` : ''}
         ${s.status !== 'refused' ? `<button class="btn-mini red" onclick="Events.setStatus('${id}','refused')">Refuser</button>` : ''}
         ${s.status === 'refused' ? `<button class="btn-mini" onclick="Events.setStatus('${id}','pending')">Remettre en attente</button>` : ''}
+        <button class="btn-mini" onclick="Events.openEdit('${dateKey}','${id}')">${filled ? 'Modifier' : 'Remplir'}</button>
         <button class="btn-mini" onclick="Events.deleteSlot('${id}')">Supprimer</button>
       </div>`}
+      <div id="ev_edit_${id}"></div>
     </div>`;
+  },
+
+  // ÉDITION D'UNE FICHE (admin). Absent sur les soirées passées : le CHECK
+  // ev_not_past est revalidé à chaque écriture. La DATE, le CODE et code_used
+  // ne sont volontairement pas modifiables (le code est à usage unique).
+  //
+  // Effet de bord utile : une fiche que le DJ n'a jamais remplie peut être
+  // saisie ici par l'admin. Le bouton Valider apparaît ensuite normalement,
+  // puisqu'il ne dépend que de la présence de `styles`.
+  openEdit(dateKey, id){
+    if (!Auth.isAdmin()) return;
+    const s = this.cache[dateKey]?.slots?.[id];
+    if (!s) return;
+    const row = document.getElementById(`ev_edit_${id}`);
+    if (!row) return;
+    const f = s.form || {};
+    const fld = (k, l, v, ph = '') =>
+      `<div class="field"><label>${l}</label><input id="eve_${k}_${id}" value="${escapeHtml(v || '')}" placeholder="${ph}"></div>`;
+    const opts = (sel) => ['<option value="">—</option>'].concat(
+      this.HORAIRES.map(h => `<option${h === sel ? ' selected' : ''}>${h}</option>`)).join('');
+    row.innerHTML = `<div class="edit-box">
+      <div class="section-meta edit-title">${s.form ? 'MODIFIER LA FICHE' : 'REMPLIR LA FICHE À LA PLACE DU DJ'}</div>
+      ${fld('soiree','NOM DE LA SOIRÉE', s.soiree)}
+      ${fld('nom','NOM DU DJ', s.nom === 'En attente…' ? '' : s.nom)}
+      <div class="grid-2">
+        <div class="field"><label>DÉBUT</label><select id="eve_debut_${id}">${opts(s.debut)}</select></div>
+        <div class="field"><label>FIN</label><select id="eve_fin_${id}">${opts(s.fin)}</select></div>
+      </div>
+      ${fld('styles','STYLES', f.styles)}
+      ${fld('format','FORMAT', f.format)}
+      ${fld('instagram','INSTAGRAM', f.instagram)}
+      ${fld('soundcloud','SOUNDCLOUD', f.soundcloud)}
+      ${fld('photo','PHOTO (lien)', f.photo, 'https://…')}
+      ${fld('email','EMAIL', f.email)}
+      ${fld('tel','TÉLÉPHONE', f.tel)}
+      ${fld('remarques','REMARQUES', f.remarques)}
+      <div id="eve_err_${id}"></div>
+      <div class="bc-actions">
+        <button class="btn-mini green" onclick="Events.saveEdit('${dateKey}','${id}')">Enregistrer</button>
+        <button class="btn-mini" onclick="Events.cancelEdit('${id}')">Annuler</button>
+      </div>
+    </div>`;
+  },
+
+  cancelEdit(id){
+    const row = document.getElementById(`ev_edit_${id}`);
+    if (row) row.innerHTML = '';
+  },
+
+  async saveEdit(dateKey, id){
+    if (!Auth.isAdmin()) return;
+    const g = k => (document.getElementById(`eve_${k}_${id}`)?.value || '').trim();
+    const err = document.getElementById(`eve_err_${id}`);
+    const f = { soiree:g('soiree'), nom:g('nom'), debut:g('debut'), fin:g('fin'),
+                styles:g('styles'), format:g('format'), instagram:g('instagram'),
+                soundcloud:g('soundcloud'), photo:g('photo'),
+                email:g('email'), tel:g('tel'), remarques:g('remarques') };
+    if (!f.soiree){ err.innerHTML = '<div class="error">Le nom de la soirée est obligatoire.</div>'; return; }
+    if (f.debut && f.fin && timeToMin(f.fin) <= timeToMin(f.debut)){
+      err.innerHTML = '<div class="error">L\'heure de fin doit être après l\'heure de début.</div>'; return;
+    }
+    const res = await EvStore.adminUpdate(id, f);
+    if (!res.ok){
+      err.innerHTML = `<div class="error">${
+        res.reason === 'past'        ? 'Cette soirée est passée : elle n\'est plus modifiable.'
+        : res.reason === 'not_admin' ? 'Ton compte n\'a pas les droits d\'administration.'
+        : `Échec de l'enregistrement. ${escapeHtml(LAST_STORAGE_ERROR || '')}`
+      }</div>`;
+      return;
+    }
+    this.loadAdmin();
   },
 
   async setStatus(id, status){

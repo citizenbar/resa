@@ -33,8 +33,9 @@ Sur une base neuve, exécuter dans cet ordre exact :
 `migrate-public-events.sql` (#5) a déplacé les colonnes promo de `*_contacts`
 vers `*_slots` puis supprimé les anciennes, mais Radio Campus n'a pas suivi :
 `rc_reservations.photo` et `.instagram` étaient publiées sans qu'aucune écriture
-ne les alimente. #8 referme ça. Le front qui lit encore ces colonnes depuis
-`*_contacts` (`events.js`, `open-platine.js`) reste à corriger séparément.
+ne les alimente. #8 referme ça. Le front qui lisait encore ces colonnes depuis
+`*_contacts` (`events.js`, `open-platine.js`) a été corrigé dans la foulée : il
+les lit désormais sur les tables vitrine, via les chemins admin.
 
 `public-occupancy.sql` n'est pas dans la séquence : c'est un ajout indépendant.
 

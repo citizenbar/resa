@@ -28,6 +28,83 @@ function fail(e){ LAST_STORAGE_ERROR = (e && (e.message || e.code)) || String(e 
 // =====================================================================
 // OPEN PLATINE
 // =====================================================================
+// =====================================================================
+// UPLOAD D'UNE PHOTO — commun aux trois modules
+// =====================================================================
+// La Vercel Function /api/upload-photo autorise puis signe ; le navigateur
+// uploade DIRECTEMENT vers Storage avec le token signé, sans jamais voir de
+// secret. Deux régimes d'autorisation côté serveur :
+//   - avec un code Events  : le code vaut autorisation (5 uploads par code) ;
+//   - sans code (RC / OP)  : quota par IP (10 par heure).
+// Passer code = null depuis Radio Campus et Open Platine.
+//
+// -> { ok:true, url } | { ok:false, reason:'too_big'|'bad_type'|'code'|'quota'|'net'|'config' }
+async function uploadArtistPhoto(code, file){
+  if (!storageReady()) return { ok:false, reason:'config' };
+  // Validation client : type + taille. Le type déclaré (file.type) est
+  // falsifiable, donc on confirme par les MAGIC BYTES (vrai contenu) ci-dessous.
+  // La vraie barrière serveur reste les contraintes du bucket
+  // (allowed_mime_types + file_size_limit) ; ceci est la défense client.
+  const ALLOWED = { 'image/jpeg':'jpg', 'image/png':'png', 'image/webp':'webp' };
+  const ext = ALLOWED[file.type];
+  if (!ext) return { ok:false, reason:'bad_type' };
+  if (file.size > 5 * 1024 * 1024) return { ok:false, reason:'too_big' };
+  const realExt = await sniffImage(file);
+  if (!realExt || realExt !== ext) return { ok:false, reason:'bad_type' };
+  const contentType = file.type;  // cohérent avec ext validé + magic bytes
+  try {
+    // 1) demander une signature (la fonction autorise : code ou quota IP)
+    const payload = code ? { code, ext } : { ext };
+    const r = await fetch('/api/upload-photo', {
+      method:'POST', headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) {
+      if (r.status === 403) return { ok:false, reason:'code' };
+      if (r.status === 429) return { ok:false, reason:'quota' };
+      return { ok:false, reason:'net' };
+    }
+    const { bucket, path, token, publicUrl } = await r.json();
+    if (!bucket || !path || !token) return { ok:false, reason:'net' };
+    // 2) uploader le fichier DIRECTEMENT vers Storage via le token signé.
+    //    contentType imposé depuis l'ext validée (pas un type arbitraire).
+    const { error } = await window.sb.storage.from(bucket)
+      .uploadToSignedUrl(path, token, file, { contentType });
+    if (error) { fail(error); return { ok:false, reason:'net' }; }
+    return { ok:true, url: publicUrl };
+  } catch (e) {
+    fail(e); return { ok:false, reason:'net' };
+  }
+}
+
+// Lit les premiers octets du fichier et renvoie 'jpg'|'png'|'webp' si la
+// signature binaire correspond à une vraie image, sinon null. Empêche qu'un
+// fichier HTML/SVG renommé .png passe la validation par extension.
+async function sniffImage(file){
+  try {
+    const buf = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+    // PNG : 89 50 4E 47
+    if (buf[0]===0x89 && buf[1]===0x50 && buf[2]===0x4E && buf[3]===0x47) return 'png';
+    // JPEG : FF D8 FF
+    if (buf[0]===0xFF && buf[1]===0xD8 && buf[2]===0xFF) return 'jpg';
+    // WebP : "RIFF" .... "WEBP"
+    if (buf[0]===0x52 && buf[1]===0x49 && buf[2]===0x46 && buf[3]===0x46 &&
+        buf[8]===0x57 && buf[9]===0x45 && buf[10]===0x42 && buf[11]===0x50) return 'webp';
+    return null;
+  } catch (_) { return null; }
+}
+
+// Traduit l'erreur d'une RPC *_admin_update en motif exploitable par l'UI.
+// Les fonctions lèvent des exceptions nommées ('past', 'overlap', 'window',
+// 'not_admin', 'not_found') ; PostgREST les remonte dans error.message.
+function rpcReason(error){
+  const m = (error && error.message) || '';
+  for (const r of ['not_admin','not_found','overlap','window_or_past','window','past']) {
+    if (m.includes(r)) return r === 'window_or_past' ? 'window' : r;
+  }
+  return 'error';
+}
+
 const OpStore = {
   // Toutes les lignes (validées pour anon ; tout pour admin) d'une date,
   // remappées en { slots: { id: {nom,styles,debut,duree,status,...} } }.
@@ -44,6 +121,31 @@ const OpStore = {
         id: r.id, nom: r.dj_nom, styles: r.styles || '',
         debut: minToTime(r.debut_min), duree: MIN_TO_DUREE[r.duree_min] || (r.duree_min/60)+'h',
         status: r.status,
+      };
+    }
+    return { slots };
+  },
+
+  // ADMIN : même chose, plus les colonnes promo (instagram, photo).
+  //
+  // Chemin SÉPARÉ du getDate public, volontairement. op_slots.photo n'existe
+  // qu'après op-photo-2026-09.sql : si le front partait avant le SQL, un select
+  // sur une colonne inexistante casserait le calendrier public d'Open Platine.
+  // En isolant la lecture ici, le chemin public reste intact quel que soit
+  // l'ordre de déploiement.
+  async getDateAdmin(dateKey){
+    if (!storageReady()) { LAST_STORAGE_ERROR = 'backend non configuré'; return { slots:{} }; }
+    const { data, error } = await window.sb
+      .from('op_slots')
+      .select('id,event_date,debut_min,duree_min,dj_nom,styles,status,instagram,photo')
+      .eq('event_date', dateKey);
+    if (error) { fail(error); return { slots:{} }; }
+    const slots = {};
+    for (const r of (data || [])) {
+      slots[r.id] = {
+        id: r.id, nom: r.dj_nom, styles: r.styles || '',
+        debut: minToTime(r.debut_min), duree: MIN_TO_DUREE[r.duree_min] || (r.duree_min/60)+'h',
+        status: r.status, instagram: r.instagram || '', photo: r.photo || '',
       };
     }
     return { slots };
@@ -79,7 +181,7 @@ const OpStore = {
   },
 
   // Réservation invité atomique (anti-chevauchement côté serveur via RPC).
-  // f = { nom,email,tel,instagram,styles,debut("HH:MM"),duree("2h"),remarques }
+  // f = { nom,email,tel,instagram,styles,debut("HH:MM"),duree("2h"),remarques,photo }
   // Retour : { ok:true } | { ok:false, reason:'overlap'|'error' }
   async request(dateKey, f){
     if (!storageReady()) return { ok:false, reason:'config' };
@@ -91,6 +193,7 @@ const OpStore = {
       p_duree_min: DUREE_TO_MIN[f.duree] || 60,
       p_dj_nom: f.nom, p_styles: f.styles,
       p_email: f.email, p_tel: f.tel, p_instagram: f.instagram, p_remarques: f.remarques || '',
+      p_photo: f.photo || '',
     });
     if (error) {
       fail(error);
@@ -98,6 +201,23 @@ const OpStore = {
       return { ok:false, reason:'error' };
     }
     return { ok:true, id: Array.isArray(data) ? data[0] : data };
+  },
+
+  // ADMIN : corriger une fiche (vitrine + contacts, même transaction).
+  // Passe par une RPC security definer : les tables *_contacts n'ont aucune
+  // policy UPDATE, et le CHECK op_not_past est revalidé à chaque écriture.
+  // -> { ok:true } | { ok:false, reason:'overlap'|'window'|'past'|'not_admin'|'error' }
+  async adminUpdate(id, f){
+    if (!storageReady()) return { ok:false, reason:'config' };
+    const { error } = await window.sb.rpc('op_admin_update', {
+      p_id: id,
+      p_dj_nom: f.nom, p_styles: f.styles,
+      p_debut_min: timeToMin(f.debut), p_duree_min: DUREE_TO_MIN[f.duree] || 60,
+      p_instagram: f.instagram || '', p_photo: f.photo || '',
+      p_email: f.email || '', p_tel: f.tel || '', p_remarques: f.remarques || '',
+    });
+    if (error) { fail(error); return { ok:false, reason: rpcReason(error) }; }
+    return { ok:true };
   },
 
   // Admin : changer le statut d'une réservation.
@@ -159,13 +279,14 @@ const RcStore = {
   },
 
   // Réservation invité atomique (1/jour garanti côté serveur).
-  // f = { emission,animateur,email,tel,style,micros,materiel,remarques }
+  // f = { emission,animateur,email,tel,style,micros,materiel,remarques,photo }
   async request(dateKey, f){
     if (!storageReady()) return { ok:false, reason:'config' };
     const { data, error } = await window.sb.rpc('rc_request', {
       p_date: dateKey, p_emission: f.emission, p_animateur: f.animateur, p_style: f.style,
       p_micros: f.micros, p_materiel: f.materiel || '',
       p_email: f.email, p_tel: f.tel, p_remarques: f.remarques || '',
+      p_photo: f.photo || '',
     });
     if (error) {
       fail(error);
@@ -173,6 +294,20 @@ const RcStore = {
       return { ok:false, reason:'error' };
     }
     return { ok:true, id: Array.isArray(data) ? data[0] : data };
+  },
+
+  // ADMIN : corriger une fiche (vitrine + contacts, même transaction).
+  // -> { ok:true } | { ok:false, reason:'past'|'not_admin'|'error' }
+  async adminUpdate(id, f){
+    if (!storageReady()) return { ok:false, reason:'config' };
+    const { error } = await window.sb.rpc('rc_admin_update', {
+      p_id: id,
+      p_emission: f.emission, p_animateur: f.animateur, p_style: f.style || '',
+      p_micros: f.micros || '', p_materiel: f.materiel || '', p_photo: f.photo || '',
+      p_email: f.email || '', p_tel: f.tel || '', p_remarques: f.remarques || '',
+    });
+    if (error) { fail(error); return { ok:false, reason: rpcReason(error) }; }
+    return { ok:true };
   },
 
   async setStatus(id, status){
@@ -187,7 +322,7 @@ const RcStore = {
     if (!storageReady()) return [];
     const { data, error } = await window.sb
       .from('rc_reservations')
-      .select('id,event_date,emission,animateur,style,micros,materiel,status,rc_contacts(email,tel,remarques)')
+      .select('id,event_date,emission,animateur,style,micros,materiel,status,photo,rc_contacts(email,tel,remarques)')
       .order('event_date', { ascending: true });
     if (error) { fail(error); return []; }
     return (data || []).map(r => {
@@ -222,7 +357,7 @@ const EvStore = {
     if (!storageReady()) { LAST_STORAGE_ERROR = 'backend non configuré'; return { slots:{} }; }
     const { data, error } = await window.sb
       .from('ev_slots')
-      .select('id,event_date,soiree,code,code_used,dj_nom,debut,fin,styles,format,status')
+      .select('id,event_date,soiree,code,code_used,dj_nom,debut,fin,styles,format,status,instagram,soundcloud,photo')
       .eq('event_date', dateKey);
     if (error) { fail(error); return { slots:{} }; }
     return EvStore._mapSlots(data);
@@ -241,7 +376,13 @@ const EvStore = {
         status: r.status,
         // l'UI teste s.form?.styles pour savoir si la fiche est remplie.
         // Une fiche remplie a un styles renseigné par le DJ.
-        form: r.styles ? { styles: r.styles || '', format: r.format || '' } : null,
+        // Les liens promo vivent sur ev_slots depuis migrate-public-events.sql :
+        // ils ne sont présents que sur le chemin admin (getDateAdmin les
+        // sélectionne), et valent undefined côté public — ce qui est voulu.
+        form: r.styles ? {
+          styles: r.styles || '', format: r.format || '',
+          instagram: r.instagram || '', soundcloud: r.soundcloud || '', photo: r.photo || '',
+        } : null,
       };
     }
     return { slots };
@@ -273,62 +414,11 @@ const EvStore = {
     return { slotId: row.slot_id, soiree: row.soiree, dateKey: row.event_date };
   },
 
-  // DJ : uploader une photo via signed upload URL (la Vercel Function valide le
-  // code et signe ; le navigateur uploade direct, sans secret).
-  // -> { ok:true, url } | { ok:false, reason:'too_big'|'bad_type'|'code'|'net'|'config' }
-  async uploadPhoto(code, file){
-    if (!storageReady()) return { ok:false, reason:'config' };
-    // Validation client : type + taille. Le type déclaré (file.type) est
-    // falsifiable, donc on confirme par les MAGIC BYTES (vrai contenu) ci-dessous.
-    // La vraie barrière serveur reste les contraintes du bucket (allowed_mime_types
-    // + file_size_limit, cf. storage-artist-photos.sql) ; ceci est la défense client.
-    const ALLOWED = { 'image/jpeg':'jpg', 'image/png':'png', 'image/webp':'webp' };
-    const ext = ALLOWED[file.type];
-    if (!ext) return { ok:false, reason:'bad_type' };
-    if (file.size > 5 * 1024 * 1024) return { ok:false, reason:'too_big' };
-    // Magic bytes : vérifier la signature binaire réelle du fichier.
-    const realExt = await EvStore._sniffImage(file);
-    if (!realExt || realExt !== ext) return { ok:false, reason:'bad_type' };
-    const contentType = file.type;  // cohérent avec ext validé + magic bytes
-    try {
-      // 1) demander une signature à la Vercel Function (vérifie le code + crédit)
-      const r = await fetch('/api/upload-photo', {
-        method:'POST', headers:{ 'Content-Type':'application/json' },
-        body: JSON.stringify({ code, ext }),
-      });
-      if (!r.ok) {
-        if (r.status === 403) return { ok:false, reason:'code' };
-        return { ok:false, reason:'net' };
-      }
-      const { bucket, path, token, publicUrl } = await r.json();
-      if (!bucket || !path || !token) return { ok:false, reason:'net' };
-      // 2) uploader le fichier DIRECTEMENT vers Storage via le token signé.
-      //    contentType imposé depuis l'ext validée (pas un type arbitraire).
-      const { error } = await window.sb.storage.from(bucket)
-        .uploadToSignedUrl(path, token, file, { contentType });
-      if (error) { fail(error); return { ok:false, reason:'net' }; }
-      return { ok:true, url: publicUrl };
-    } catch (e) {
-      fail(e); return { ok:false, reason:'net' };
-    }
-  },
+  // DJ : uploader une photo. Le code Events vaut autorisation et porte son
+  // propre compteur (5 uploads par code) : on le transmet tel quel.
+  // Voir uploadArtistPhoto() plus haut, commun aux trois modules.
+  async uploadPhoto(code, file){ return uploadArtistPhoto(code, file); },
 
-  // Lit les premiers octets du fichier et renvoie 'jpg'|'png'|'webp' si la
-  // signature binaire correspond à une vraie image, sinon null. Empêche
-  // qu'un fichier HTML/SVG renommé .png passe la validation par extension.
-  async _sniffImage(file){
-    try {
-      const buf = new Uint8Array(await file.slice(0, 16).arrayBuffer());
-      // PNG : 89 50 4E 47
-      if (buf[0]===0x89 && buf[1]===0x50 && buf[2]===0x4E && buf[3]===0x47) return 'png';
-      // JPEG : FF D8 FF
-      if (buf[0]===0xFF && buf[1]===0xD8 && buf[2]===0xFF) return 'jpg';
-      // WebP : "RIFF"...."WEBP"
-      if (buf[0]===0x52 && buf[1]===0x49 && buf[2]===0x46 && buf[3]===0x46 &&
-          buf[8]===0x57 && buf[9]===0x45 && buf[10]===0x42 && buf[11]===0x50) return 'webp';
-      return null;
-    } catch (_) { return null; }
-  },
 
   // DJ : remplir la fiche (scelle le code). f = fiche complète. -> { ok, reason }
   async fillSlot(code, f){
@@ -345,6 +435,23 @@ const EvStore = {
       return { ok:false, reason:'error' };
     }
     return { ok:true, id: Array.isArray(data) ? data[0] : data };
+  },
+
+  // ADMIN : corriger une fiche (vitrine + contacts, même transaction).
+  // La date, le code et code_used ne sont volontairement PAS modifiables.
+  // -> { ok:true } | { ok:false, reason:'past'|'not_admin'|'error' }
+  async adminUpdate(id, f){
+    if (!storageReady()) return { ok:false, reason:'config' };
+    const { error } = await window.sb.rpc('ev_admin_update', {
+      p_id: id,
+      p_soiree: f.soiree, p_dj_nom: f.nom,
+      p_debut: f.debut || null, p_fin: f.fin || null,
+      p_styles: f.styles || '', p_format: f.format || '',
+      p_instagram: f.instagram || '', p_soundcloud: f.soundcloud || '', p_photo: f.photo || '',
+      p_email: f.email || '', p_tel: f.tel || '', p_remarques: f.remarques || '',
+    });
+    if (error) { fail(error); return { ok:false, reason: rpcReason(error) }; }
+    return { ok:true };
   },
 
   async setStatus(id, status){

@@ -15,7 +15,7 @@ const RadioCampus = {
   cache: {},            // dateKey -> resa | null
   form: {},
 
-  emptyForm(){ return { emission:'', animateur:'', email:'', tel:'', style:'', micros:'', materiel:'', remarques:'' }; },
+  emptyForm(){ return { emission:'', animateur:'', email:'', tel:'', style:'', micros:'', materiel:'', remarques:'', photo:'' }; },
 
   // lundi=1, mercredi=3 fermés
   isClosed(d){ const g = d.getDay(); return g === 1 || g === 3; },
@@ -149,8 +149,8 @@ const RadioCampus = {
     return `<div ${onclick} style="min-height:64px;padding:8px 4px;text-align:center;border-top:1px solid var(--muted);border-left:1px solid var(--muted);display:flex;flex-direction:column;align-items:center;gap:4px;${av ? 'cursor:pointer' : ''};${isToday && inM ? 'background:var(--bg-3)' : ''}">
       <span style="font-family:'Fraunces',serif;font-size:14px;color:${numColor};font-weight:${isToday ? '600' : '400'}">${date.getDate()}</span>
       ${dotColor ? `<div style="width:5px;height:5px;border-radius:50%;background:${dotColor}"></div>` : ''}
-      ${inM && blocked && r ? `<div style="font-size:7px;font-family:'JetBrains Mono',monospace;color:var(--refused);max-width:54px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.emission || '')}</div>` : ''}
-      ${inM && !blocked && pending ? `<div style="font-size:7px;font-family:'JetBrains Mono',monospace;color:var(--pending)">demandé</div>` : ''}
+      ${inM && blocked && r ? `<div class="cal-label" style="color:var(--refused)">${escapeHtml(r.emission || '')}</div>` : ''}
+      ${inM && !blocked && pending ? `<div class="cal-label" style="color:var(--pending)">demandé</div>` : ''}
     </div>`;
   },
 
@@ -197,6 +197,13 @@ const RadioCampus = {
         qu'elle pourra être refusée si l'autre demande est validée en premier.
       </div>` : ''}
       ${fields.map(([k,l,p]) => `<div class="field"><label>${l}</label><input id="rc_${k}" value="${escapeHtml(f[k])}" placeholder="${p}"></div>`).join('')}
+      <div class="field">
+        <label>PHOTO / VISUEL DE L'ÉMISSION</label>
+        <div class="section-meta" style="margin-bottom:6px">Facultatif, mais c'est ce qui nous permet de faire l'affiche. Téléverse une image (JPG, PNG ou WebP, 5 Mo max) OU colle un lien.</div>
+        <input type="file" id="rc_photo_file" accept="image/jpeg,image/png,image/webp" onchange="RadioCampus.onPhotoPick()">
+        <div id="rc_photo_status" class="section-meta" style="margin-top:4px"></div>
+        <div style="margin-top:8px"><input id="rc_photo" value="${escapeHtml(f.photo || '')}" placeholder="…ou lien : Drive, Instagram, WeTransfer…"></div>
+      </div>
       <div id="rc_err"></div>
       <button class="btn" onclick="RadioCampus.submit()">Confirmer la réservation</button>
       <div style="margin-top:18px;padding:14px 16px;background:var(--bg-2);border-left:2px solid var(--accent)">
@@ -208,7 +215,26 @@ const RadioCampus = {
   readForm(){
     const g = id => (document.getElementById(id)?.value || '').trim();
     return { emission:g('rc_emission'), animateur:g('rc_animateur'), email:g('rc_email'), tel:g('rc_tel'),
-      style:g('rc_style'), micros:g('rc_micros'), materiel:g('rc_materiel'), remarques:g('rc_remarques') };
+      style:g('rc_style'), micros:g('rc_micros'), materiel:g('rc_materiel'), remarques:g('rc_remarques'),
+      photo:g('rc_photo') };
+  },
+
+  // Choix d'un fichier : validation immédiate (type + taille) + retour visuel.
+  // Un fichier valide vide le champ lien (les deux sont exclusifs, cf. Events).
+  onPhotoPick(){
+    const input = document.getElementById('rc_photo_file');
+    const status = document.getElementById('rc_photo_status');
+    const link = document.getElementById('rc_photo');
+    const file = input?.files?.[0];
+    if (!file){ if (status) status.textContent = ''; return; }
+    if (!['image/jpeg','image/png','image/webp'].includes(file.type)){
+      status.innerHTML = '<span style="color:var(--refused)">Format non supporté (JPG, PNG, WebP).</span>'; input.value = ''; return;
+    }
+    if (file.size > 5*1024*1024){
+      status.innerHTML = '<span style="color:var(--refused)">Fichier trop lourd (5 Mo max).</span>'; input.value = ''; return;
+    }
+    status.innerHTML = `<span style="color:var(--ok)">✓ ${escapeHtml(file.name)} prêt à être envoyé.</span>`;
+    if (link) link.value = '';
   },
 
   async submit(){
@@ -223,7 +249,29 @@ const RadioCampus = {
       err.innerHTML = '<div class="error">Email invalide.</div>'; return;
     }
     const dateKey = dk(this.selDate);
+    const photoFile = document.getElementById('rc_photo_file')?.files?.[0] || null;
     this._submitting = true; if (btn){ btn.disabled = true; btn.textContent = 'Envoi…'; }
+
+    // Photo facultative. Si un fichier est fourni, on l'uploade d'abord : il
+    // prime sur le lien. Pas de code ici (module ouvert), donc l'autorisation
+    // serveur passe par le quota d'IP (upload-quota-2026-09.sql).
+    if (photoFile){
+      if (btn) btn.textContent = 'Envoi de la photo…';
+      const up = await uploadArtistPhoto(null, photoFile);
+      if (!up.ok){
+        this._submitting = false;
+        if (btn){ btn.disabled = false; btn.textContent = 'Confirmer la réservation'; }
+        err.innerHTML =
+          up.reason === 'too_big'  ? '<div class="error">Photo trop lourde (5 Mo max).</div>'
+          : up.reason === 'bad_type' ? '<div class="error">Format de photo non supporté (JPG, PNG, WebP).</div>'
+          : up.reason === 'quota'    ? '<div class="error">Trop d\'envois depuis cette connexion. Réessaie dans une heure, ou colle un lien à la place.</div>'
+          : '<div class="error">Échec de l\'envoi de la photo. Réessaie, ou colle un lien à la place.</div>';
+        return;
+      }
+      f.photo = up.url;   // l'URL Storage remplace tout lien éventuel
+      if (btn) btn.textContent = 'Envoi…';
+    }
+
     const res = await RcStore.request(dateKey, f);
     this._submitting = false;
     if (!res.ok){
@@ -276,6 +324,9 @@ const RadioCampus = {
   async loadAdmin(){
     // admin : toutes les réservations (y compris refusées), contacts inclus
     const rows = await RcStore.listAll();
+    // Index par id : le formulaire d'édition y relit la ligne sans refaire d'appel.
+    this.adminRows = {};
+    for (const r of rows) this.adminRows[r.id] = r;
     const all = rows.map(r => ({ dateKey: r.event_date, date: parseDk(r.event_date), r }));
     const count = st => all.filter(x => x.r.status === st).length;
     const target = document.getElementById('rc_admin'); if (!target) return;
@@ -296,7 +347,7 @@ const RadioCampus = {
     return `<div class="admin-group"><div class="admin-group-title">${isPastList ? 'Passé' : 'À venir'}</div>` +
       arr.map(({ dateKey, date, r }) => {
         const bc = r.status === 'validated' ? 'var(--ok)' : r.status === 'refused' ? 'var(--refused)' : 'var(--pending)';
-        const meta = [['réf',refFromId('rc', r.id)],['style',r.style],['micros',r.micros],['email',r.email],['tél',r.tel], r.materiel && ['matériel',r.materiel], r.remarques && ['remarques',r.remarques]].filter(Boolean);
+        const meta = [['réf',refFromId('rc', r.id)],['style',r.style],['micros',r.micros],['email',r.email],['tél',r.tel], r.materiel && ['matériel',r.materiel], r.photo && ['photo',r.photo], r.remarques && ['remarques',r.remarques]].filter(Boolean);
         return `<div class="booking-card" style="--bc:${bc}${isPastList ? ';opacity:0.6' : ''}">
           <div class="bc-head">
             <div><div class="bc-name">${escapeHtml(r.emission)}</div><div class="bc-sub">${escapeHtml(r.animateur)} · ${fmtDay(date)} ${date.getDate()} ${MONTHS[date.getMonth()]}</div></div>
@@ -307,9 +358,68 @@ const RadioCampus = {
             ${r.status !== 'validated' ? `<button class="btn-mini green" onclick="RadioCampus.setStatus('${r.id}','validated')">Valider</button>` : ''}
             ${r.status !== 'refused' ? `<button class="btn-mini red" onclick="RadioCampus.setStatus('${r.id}','refused')">Refuser</button>` : ''}
             ${r.status === 'refused' ? `<button class="btn-mini" onclick="RadioCampus.setStatus('${r.id}','pending')">Remettre en attente</button>` : ''}
+            <button class="btn-mini" onclick="RadioCampus.openEdit('${r.id}')">Modifier</button>
           </div>`}
+          <div id="rc_edit_${r.id}"></div>
         </div>`;
       }).join('') + `</div>`;
+  },
+
+  // ÉDITION D'UNE FICHE (admin). Bouton absent sur les émissions passées : le
+  // CHECK rc_not_past est revalidé à chaque écriture. La DATE n'est pas
+  // éditable (rc_one_per_day) : pour déplacer, supprimer et recréer.
+  openEdit(id){
+    if (!Auth.isAdmin()) return;
+    const r = (this.adminRows || {})[id];
+    if (!r) return;
+    const row = document.getElementById(`rc_edit_${id}`);
+    if (!row) return;
+    const fld = (k, l, v, ph = '') =>
+      `<div class="field"><label>${l}</label><input id="rce_${k}_${id}" value="${escapeHtml(v || '')}" placeholder="${ph}"></div>`;
+    row.innerHTML = `<div class="edit-box">
+      <div class="section-meta edit-title">MODIFIER LA FICHE</div>
+      ${fld('emission',"NOM DE L'ÉMISSION", r.emission)}
+      ${fld('animateur','ANIMATEUR', r.animateur)}
+      ${fld('style','STYLE / THÉMATIQUE', r.style)}
+      ${fld('micros','NOMBRE DE MICROS', r.micros)}
+      ${fld('materiel','MATÉRIEL', r.materiel)}
+      ${fld('photo','PHOTO (lien)', r.photo, 'https://…')}
+      ${fld('email','EMAIL', r.email)}
+      ${fld('tel','TÉLÉPHONE', r.tel)}
+      ${fld('remarques','REMARQUES', r.remarques)}
+      <div id="rce_err_${id}"></div>
+      <div class="bc-actions">
+        <button class="btn-mini green" onclick="RadioCampus.saveEdit('${id}')">Enregistrer</button>
+        <button class="btn-mini" onclick="RadioCampus.cancelEdit('${id}')">Annuler</button>
+      </div>
+    </div>`;
+  },
+
+  cancelEdit(id){
+    const row = document.getElementById(`rc_edit_${id}`);
+    if (row) row.innerHTML = '';
+  },
+
+  async saveEdit(id){
+    if (!Auth.isAdmin()) return;
+    const g = k => (document.getElementById(`rce_${k}_${id}`)?.value || '').trim();
+    const err = document.getElementById(`rce_err_${id}`);
+    const f = { emission:g('emission'), animateur:g('animateur'), style:g('style'),
+                micros:g('micros'), materiel:g('materiel'), photo:g('photo'),
+                email:g('email'), tel:g('tel'), remarques:g('remarques') };
+    if (!f.emission || !f.animateur){
+      err.innerHTML = '<div class="error">Le nom de l\'émission et l\'animateur sont obligatoires.</div>'; return;
+    }
+    const res = await RcStore.adminUpdate(id, f);
+    if (!res.ok){
+      err.innerHTML = `<div class="error">${
+        res.reason === 'past'        ? 'Cette émission est passée : elle n\'est plus modifiable.'
+        : res.reason === 'not_admin' ? 'Ton compte n\'a pas les droits d\'administration.'
+        : `Échec de l'enregistrement. ${escapeHtml(LAST_STORAGE_ERROR || '')}`
+      }</div>`;
+      return;
+    }
+    this.loadAdmin();
   },
 
   async setStatus(id, status){

@@ -21,7 +21,7 @@ const OpenPlatine = {
   cache: {},            // dateKey -> { slots }
   form: {},
 
-  emptyForm(){ return { nom:'', email:'', tel:'', instagram:'', styles:'', remarques:'', debut:'', duree:'' }; },
+  emptyForm(){ return { nom:'', email:'', tel:'', instagram:'', styles:'', remarques:'', debut:'', duree:'', photo:'' }; },
 
   // --- data ---
   slotsOf(dateKey){ return Object.values(this.cache[dateKey]?.slots || {}); },
@@ -131,6 +131,22 @@ const OpenPlatine = {
         <h1 class="title">Open<br><em>Platine</em></h1>
         <p class="lead">Réserve ton créneau, branche ta clé, joue ton set. Premier arrivé, premier servi. Validation par l'équipe.</p>
       </section>
+      <!-- Matériel annoncé : « branche ta clé » laissait deviner l'installation
+           sans jamais la décrire. Un DJ doit savoir ce qu'il trouve en arrivant,
+           et surtout ce qu'il doit apporter (le casque). La Traktor Kontrol Z2
+           est volontairement HORS de cette liste : l'annoncer ferait venir des
+           DJ avec leur ordinateur sans prévenir. Elle reste disponible sur
+           demande. -->
+      <div class="gear">
+        <div class="section-meta gear-title">CE QUI T'ATTEND EN RÉGIE</div>
+        <ul class="gear-list">
+          <li>2 platines vinyle Technics MK2</li>
+          <li>2 Pioneer XDJ-1000 MK2 (lecture clé USB)</li>
+          <li>Table de mixage Allen &amp; Heath Xone:43C</li>
+        </ul>
+        <div class="gear-note"><strong>Le casque n'est pas fourni</strong> : pense à apporter le tien.</div>
+        <div class="gear-note">Autre configuration (contrôleur, ordinateur) : demande-nous avant, on en discute.</div>
+      </div>
       <div class="section-head"><h2 class="section-title">Choisis ta date</h2>
         <div class="section-meta"></div></div>
       <div class="month-selector" id="opMonths"></div>
@@ -260,6 +276,13 @@ const OpenPlatine = {
           <select id="op_duree">${['<option value="">Choisir…</option>'].concat(this.DUREES.map(x => `<option ${f.duree === x ? 'selected' : ''}>${x}</option>`)).join('')}</select></div>
       </div>
       ${fields.map(([k,l,p]) => `<div class="field"><label>${l}</label><input id="op_${k}" value="${escapeHtml(f[k])}" placeholder="${p}"></div>`).join('')}
+      <div class="field">
+        <label>PHOTO / VISUEL</label>
+        <div class="section-meta" style="margin-bottom:6px">Facultatif, mais c'est ce qui nous permet de faire l'affiche. Téléverse une image (JPG, PNG ou WebP, 5 Mo max) OU colle un lien.</div>
+        <input type="file" id="op_photo_file" accept="image/jpeg,image/png,image/webp" onchange="OpenPlatine.onPhotoPick()">
+        <div id="op_photo_status" class="section-meta" style="margin-top:4px"></div>
+        <div style="margin-top:8px"><input id="op_photo" value="${escapeHtml(f.photo || '')}" placeholder="…ou lien : Drive, Instagram, WeTransfer…"></div>
+      </div>
       <div id="op_err"></div>
       <button class="btn" onclick="OpenPlatine.submit()">Envoyer mon inscription</button>
     `;
@@ -268,7 +291,26 @@ const OpenPlatine = {
   readForm(){
     const g = id => (document.getElementById(id)?.value || '').trim();
     return { nom:g('op_nom'), email:g('op_email'), tel:g('op_tel'), instagram:g('op_instagram'),
-      styles:g('op_styles'), remarques:g('op_remarques'), debut:g('op_debut'), duree:g('op_duree') };
+      styles:g('op_styles'), remarques:g('op_remarques'), debut:g('op_debut'), duree:g('op_duree'),
+      photo:g('op_photo') };
+  },
+
+  // Choix d'un fichier : validation immédiate (type + taille) + retour visuel.
+  // Un fichier valide vide le champ lien (les deux sont exclusifs, cf. Events).
+  onPhotoPick(){
+    const input = document.getElementById('op_photo_file');
+    const status = document.getElementById('op_photo_status');
+    const link = document.getElementById('op_photo');
+    const file = input?.files?.[0];
+    if (!file){ if (status) status.textContent = ''; return; }
+    if (!['image/jpeg','image/png','image/webp'].includes(file.type)){
+      status.innerHTML = '<span style="color:var(--refused)">Format non supporté (JPG, PNG, WebP).</span>'; input.value = ''; return;
+    }
+    if (file.size > 5*1024*1024){
+      status.innerHTML = '<span style="color:var(--refused)">Fichier trop lourd (5 Mo max).</span>'; input.value = ''; return;
+    }
+    status.innerHTML = `<span style="color:var(--ok)">✓ ${escapeHtml(file.name)} prêt à être envoyé.</span>`;
+    if (link) link.value = '';
   },
 
   async submit(){
@@ -289,7 +331,29 @@ const OpenPlatine = {
       err.innerHTML = '<div class="error">Ce créneau chevauche une réservation existante. Choisis un autre horaire.</div>';
       return;
     }
+    const photoFile = document.getElementById('op_photo_file')?.files?.[0] || null;
     this._submitting = true; if (btn){ btn.disabled = true; btn.textContent = 'Envoi…'; }
+
+    // Photo facultative. Si un fichier est fourni, on l'uploade d'abord : il
+    // prime sur le lien. Pas de code ici (module ouvert), donc l'autorisation
+    // serveur passe par le quota d'IP (upload-quota-2026-09.sql).
+    if (photoFile){
+      if (btn) btn.textContent = 'Envoi de la photo…';
+      const up = await uploadArtistPhoto(null, photoFile);
+      if (!up.ok){
+        this._submitting = false;
+        if (btn){ btn.disabled = false; btn.textContent = 'Envoyer mon inscription'; }
+        err.innerHTML =
+          up.reason === 'too_big'  ? '<div class="error">Photo trop lourde (5 Mo max).</div>'
+          : up.reason === 'bad_type' ? '<div class="error">Format de photo non supporté (JPG, PNG, WebP).</div>'
+          : up.reason === 'quota'    ? '<div class="error">Trop d\'envois depuis cette connexion. Réessaie dans une heure, ou colle un lien à la place.</div>'
+          : '<div class="error">Échec de l\'envoi de la photo. Réessaie, ou colle un lien à la place.</div>';
+        return;
+      }
+      f.photo = up.url;   // l'URL Storage remplace tout lien éventuel
+      if (btn) btn.textContent = 'Envoi…';
+    }
+
     const res = await OpStore.request(dateKey, f);
     this._submitting = false;
     if (!res.ok){
@@ -340,7 +404,9 @@ const OpenPlatine = {
   async loadAdmin(){
     const dateKeys = (await OpStore.listDateKeys()).sort();
     // charge les dates en parallèle
-    const datas = await Promise.all(dateKeys.map(k => OpStore.getDate(k)));
+    // getDateAdmin (et non getDate) : lit en plus les colonnes promo
+    // (instagram, photo) portées par op_slots. Chemin séparé du public.
+    const datas = await Promise.all(dateKeys.map(k => OpStore.getDateAdmin(k)));
     const groups = [];
     dateKeys.forEach((dateKey, i) => {
       const data = datas[i]; if (!data) return;
@@ -352,7 +418,10 @@ const OpenPlatine = {
     // enrichit chaque slot de ses contacts (table privée), en parallèle
     const flat = groups.flatMap(g => g.slots.map(([id, s]) => ({ id, s })));
     const contacts = await Promise.all(flat.map(x => OpStore.contact(x.id)));
-    flat.forEach((x, i) => { const c = contacts[i] || {}; x.s.email = c.email; x.s.tel = c.tel; x.s.instagram = c.instagram; x.s.remarques = c.remarques; });
+    // op_contacts ne porte plus instagram (migrate-public-events.sql l'a déplacé
+    // vers op_slots) : le lire ici renvoyait undefined. Il vient désormais de
+    // getDateAdmin, avec la photo.
+    flat.forEach((x, i) => { const c = contacts[i] || {}; x.s.email = c.email; x.s.tel = c.tel; x.s.remarques = c.remarques; });
     const all = groups.flatMap(g => g.slots.map(([,s]) => s));
     const count = st => all.filter(s => s.status === st).length;
     const target = document.getElementById('op_admin');
@@ -386,7 +455,7 @@ const OpenPlatine = {
 
   bookingCard(dateKey, id, s, isPastCard){
     const bc = s.status === 'validated' ? 'var(--ok)' : s.status === 'refused' ? 'var(--refused)' : 'var(--pending)';
-    const meta = [['réf',refFromId('op', s.id)],['email',s.email],['tél',s.tel],['instagram',s.instagram],['styles',s.styles], s.remarques && ['remarques',s.remarques]].filter(Boolean);
+    const meta = [['réf',refFromId('op', s.id)],['email',s.email],['tél',s.tel],s.instagram && ['instagram',s.instagram],['styles',s.styles], s.photo && ['photo',s.photo], s.remarques && ['remarques',s.remarques]].filter(Boolean);
     return `<div class="booking-card" style="--bc:${bc}">
       <div class="bc-head">
         <div><div class="bc-name">${escapeHtml(s.nom)}</div><div class="bc-sub">${escapeHtml(s.debut)} · ${escapeHtml(s.duree)}</div></div>
@@ -397,8 +466,74 @@ const OpenPlatine = {
         ${s.status !== 'validated' ? `<button class="btn-mini green" onclick="OpenPlatine.setStatus('${dateKey}','${id}','validated')">Valider</button>` : ''}
         ${s.status !== 'refused' ? `<button class="btn-mini red" onclick="OpenPlatine.setStatus('${dateKey}','${id}','refused')">Refuser</button>` : ''}
         ${s.status === 'refused' ? `<button class="btn-mini" onclick="OpenPlatine.setStatus('${dateKey}','${id}','pending')">Remettre en attente</button>` : ''}
+        <button class="btn-mini" onclick="OpenPlatine.openEdit('${dateKey}','${id}')">Modifier</button>
       </div>`}
+      <div id="op_edit_${id}"></div>
     </div>`;
+  },
+
+  // ÉDITION D'UNE FICHE (admin). Le bouton n'apparaît que sur les cartes à
+  // venir : le CHECK op_not_past est revalidé à chaque écriture, une soirée
+  // passée est de toute façon non modifiable côté base.
+  // La DATE n'est pas éditable : la changer peut violer op_no_overlap et
+  // revient à créer un autre créneau (supprimer puis recréer).
+  openEdit(dateKey, id){
+    if (!Auth.isAdmin()) return;
+    const s = this.cache[dateKey]?.slots?.[id];
+    if (!s) return;
+    this.editing = { dateKey, id };
+    const row = document.getElementById(`op_edit_${id}`);
+    if (!row) return;
+    const fld = (k, l, v, ph = '') =>
+      `<div class="field"><label>${l}</label><input id="ope_${k}_${id}" value="${escapeHtml(v || '')}" placeholder="${ph}"></div>`;
+    row.innerHTML = `<div class="edit-box">
+      <div class="section-meta edit-title">MODIFIER LA FICHE</div>
+      ${fld('nom','NOM DU DJ', s.nom)}
+      <div class="grid-2">
+        <div class="field"><label>DÉBUT</label><select id="ope_debut_${id}">${this.HORAIRES.map(h => `<option${h === s.debut ? ' selected' : ''}>${h}</option>`).join('')}</select></div>
+        <div class="field"><label>DURÉE</label><select id="ope_duree_${id}">${this.DUREES.map(d => `<option${d === s.duree ? ' selected' : ''}>${d}</option>`).join('')}</select></div>
+      </div>
+      ${fld('styles','STYLES', s.styles)}
+      ${fld('instagram','INSTAGRAM', s.instagram)}
+      ${fld('photo','PHOTO (lien)', s.photo, 'https://…')}
+      ${fld('email','EMAIL', s.email)}
+      ${fld('tel','TÉLÉPHONE', s.tel)}
+      ${fld('remarques','REMARQUES', s.remarques)}
+      <div id="ope_err_${id}"></div>
+      <div class="bc-actions">
+        <button class="btn-mini green" onclick="OpenPlatine.saveEdit('${dateKey}','${id}')">Enregistrer</button>
+        <button class="btn-mini" onclick="OpenPlatine.cancelEdit('${id}')">Annuler</button>
+      </div>
+    </div>`;
+  },
+
+  cancelEdit(id){
+    this.editing = null;
+    const row = document.getElementById(`op_edit_${id}`);
+    if (row) row.innerHTML = '';
+  },
+
+  async saveEdit(dateKey, id){
+    if (!Auth.isAdmin()) return;
+    const g = k => (document.getElementById(`ope_${k}_${id}`)?.value || '').trim();
+    const err = document.getElementById(`ope_err_${id}`);
+    const f = { nom:g('nom'), debut:g('debut'), duree:g('duree'), styles:g('styles'),
+                instagram:g('instagram'), photo:g('photo'),
+                email:g('email'), tel:g('tel'), remarques:g('remarques') };
+    if (!f.nom){ err.innerHTML = '<div class="error">Le nom du DJ est obligatoire.</div>'; return; }
+    const res = await OpStore.adminUpdate(id, f);
+    if (!res.ok){
+      err.innerHTML = `<div class="error">${
+        res.reason === 'overlap'   ? 'Ce nouvel horaire chevauche un autre set du même soir.'
+        : res.reason === 'window'  ? 'Horaire hors de la fenêtre 19h30 – 02h00.'
+        : res.reason === 'past'    ? 'Cette soirée est passée : elle n\'est plus modifiable.'
+        : res.reason === 'not_admin' ? 'Ton compte n\'a pas les droits d\'administration.'
+        : `Échec de l'enregistrement. ${escapeHtml(LAST_STORAGE_ERROR || '')}`
+      }</div>`;
+      return;
+    }
+    this.editing = null;
+    this.loadAdmin();
   },
 
   async setStatus(dateKey, id, status){

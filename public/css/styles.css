@@ -221,7 +221,70 @@ header.top {
 }
 .admin-bar-tag { font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .admin-bar-mail { opacity: 0.75; margin-right: auto; }
-.admin-bar .btn-mini {
+.admin-bar /* Formulaire d'édition d'une fiche, déplié dans la carte admin. Encadré et
+   décalé pour qu'on voie d'un coup d'œil qu'on est en train de modifier une
+   ligne précise, et non de saisir une nouvelle demande. */
+.edit-box {
+  margin-top: 14px;
+  padding: 16px 18px;
+  background: var(--bg-2);
+  border: 1px solid var(--muted);
+  border-left: 3px solid var(--accent);
+}
+.edit-title { color: var(--accent); font-weight: 700; margin-bottom: 12px; }
+.edit-box .field { margin-bottom: 12px; }
+.edit-box .bc-actions { margin-top: 14px; }
+
+/* Bloc « matériel » d'Open Platine : ce que le DJ trouve en régie, et ce
+   qu'il doit apporter. Traité comme une information utile et non comme une
+   note de bas de page — c'est ce qui évite un set raté faute de casque. */
+.gear {
+  margin: 22px 0 4px;
+  padding: 18px 20px;
+  background: var(--bg-2);
+  border-left: 3px solid var(--accent);
+}
+.gear-title { color: var(--accent); font-weight: 700; margin-bottom: 10px; }
+.gear-list {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  font-family: 'Fraunces', serif;
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--fg);
+}
+.gear-note {
+  font-family: 'Fraunces', serif;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--fg-dim);
+  margin-top: 6px;
+}
+.gear-note strong { color: var(--fg); }
+
+/* Libellé d'une case de calendrier (nom de soirée, d'émission, état).
+   Ces textes étaient rendus en 7 à 8px et tronqués par une ellipse : illisible
+   sans zoomer, sur le poste du bar comme au téléphone. On remonte à 11px et on
+   autorise le retour à la ligne — une case fait 64px de haut minimum, elle a la
+   place pour deux lignes. `word-break` évite qu'un nom d'un seul tenant déborde
+   de la colonne. */
+.cal-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  line-height: 1.25;
+  letter-spacing: 0.02em;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.cal-label.is-strong { font-weight: 700; }
+/* Sur les écrans étroits, la case descend sous ~45px de large : on rend un cran
+   plus compact plutôt que de retomber dans l'illisible. */
+@media (max-width: 560px) {
+  .cal-label { font-size: 10px; letter-spacing: 0; }
+}
+
+.btn-mini {
   background: transparent;
   color: var(--bg);
   border: 1px solid color-mix(in srgb, var(--bg) 45%, transparent);
