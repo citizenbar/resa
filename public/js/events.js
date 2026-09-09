@@ -236,7 +236,7 @@ const Events = {
         err.innerHTML =
           up.reason === 'too_big' ? '<div class="error">Photo trop lourde (5 Mo max).</div>'
           : up.reason === 'bad_type' ? '<div class="error">Format de photo non supporté (JPG, PNG, WebP).</div>'
-          : up.reason === 'code' ? '<div class="error">Code Events invalide ou déjà utilisé.</div>'
+          : up.reason === 'code' ? '<div class="error">Envoi refusé : code Events invalide ou déjà utilisé, trop d\'essais, ou soirée déjà passée. Colle un lien à la place, ou préviens l\'équipe.</div>'
           : '<div class="error">Échec de l\'envoi de la photo. Réessaie, ou colle un lien à la place.</div>';
         return;
       }

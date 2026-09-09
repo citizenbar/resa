@@ -248,7 +248,12 @@ module.exports = async function handler(req, res) {
       if (!(await reserveUploadSlot(code))) {
         res.statusCode = 403;
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
-        res.end(JSON.stringify({ error: 'code Events invalide, déjà utilisé, ou trop d\'envois' }));
+        // ev_can_upload renvoie false pour quatre raisons indistinguables ici :
+        // code inconnu, code déjà scellé, 5 uploads atteints, ou soirée passée.
+        // Le message les couvre toutes plutôt que d'en affirmer une seule — la
+        // version précédente accusait le code, ce qui envoyait le DJ (et le
+        // débogage) dans la mauvaise direction quand la vraie cause était la date.
+        res.end(JSON.stringify({ error: 'upload impossible : code Events invalide ou déjà utilisé, trop d\'envois, ou soirée passée' }));
         return;
       }
     } else {
