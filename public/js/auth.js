@@ -42,11 +42,26 @@ const Auth = {
       const { data } = await window.sb.auth.getSession();
       this.session = (data && data.session) || null;
       await this._refreshAdminFlag();
-      window.sb.auth.onAuthStateChange(async (_event, session) => {
+      // RÈGLE DU SDK : ne JAMAIS attendre (await) un appel Supabase à
+      // l'intérieur de ce callback. supabase-js l'exécute en tenant un verrou
+      // interne sur la session ; tout appel du SDK lancé depuis le callback
+      // (rpc, from, ...) doit d'abord acquérir ce même verrou pour rafraîchir
+      // le token — et attend donc que le callback se termine, lequel attend
+      // l'appel. Interblocage. Symptôme constaté en production : le tableau de
+      // bord Events figé sur « Chargement… » au changement d'onglet, dès que
+      // le token s'était rafraîchi en arrière-plan.
+      //
+      // On enregistre donc l'état de session de façon SYNCHRONE, et on diffère
+      // le rafraîchissement du drapeau admin (qui fait un rpc) HORS du
+      // callback, via setTimeout(0). Le callback rend la main immédiatement,
+      // le verrou est libéré, et le rpc s'exécute ensuite sans contention.
+      window.sb.auth.onAuthStateChange((_event, session) => {
         this.session = session || null;
-        await this._refreshAdminFlag();
         if (this.session) this._armIdle(); else this._disarmIdle();
-        if (typeof onAuthChanged === 'function') onAuthChanged();
+        setTimeout(async () => {
+          await this._refreshAdminFlag();
+          if (typeof onAuthChanged === 'function') onAuthChanged();
+        }, 0);
       });
       if (this.session) this._armIdle();
     } catch (e) {
